@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy this to cloud_resources.json and fill in values after CDK deployment.",
+  "session_table": "swing-trading-agent-sessions",
+  "s3_bucket": "swing-trading-agent-data-123456789012-us-west-2",
+  "agentcore_runtime_arn": "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/swing_trading_agent_trading_runtime",
+  "region": "us-west-2"
+}

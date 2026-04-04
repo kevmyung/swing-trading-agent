@@ -1,0 +1,23 @@
+{
+  "name": "swing-trading-agent-infra",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy:storage": "cdk deploy swing-trading-agent-storage --require-approval never",
+    "deploy:runtime": "cdk deploy swing-trading-agent-runtime --require-approval never",
+    "deploy:all": "cdk deploy --all --require-approval never",
+    "destroy:all": "cdk destroy --all --force"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.200.0",
+    "constructs": "^10.4.0",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "aws-cdk": "^2.200.0"
+  }
+}

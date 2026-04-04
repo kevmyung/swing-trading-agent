@@ -1,0 +1,67 @@
+.DS_Store
+
+# Environment
+.env
+.venv/
+venv/
+config/cloud_resources.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# State & cache
+.state/
+.cache/
+
+# Backtest fixtures (large data files — regenerate with refresh.py)
+backtest/fixtures/alpaca/daily_bars.json
+backtest/fixtures/alpaca/hourly_bars.json
+backtest/fixtures/alpaca/latest_quotes.json
+backtest/fixtures/alpaca/trading_state.json
+backtest/fixtures/yfinance/daily_bars.json
+backtest/fixtures/yfinance/hourly_bars.json
+backtest/fixtures/wikipedia/
+backtest/fixtures/polygon/
+backtest/fixtures/refresh.log
+backtest/sessions/
+
+# Test cache
+.pytest_cache/
+.coverage
+
+# Claude
+CLAUDE.md
+.claude/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Runtime state
+state/settings.json
+state/watchlist.json
+state/portfolio.json
+state/research/
+state/logs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/state/
+
+# CDK
+infra/node_modules/
+infra/dist/
+infra/cdk.out/
+infra/outputs-*.json
+
+# Local data/cache
+/data/
+
+# Script dumps (prompt/result logs)
+scripts/dump/
