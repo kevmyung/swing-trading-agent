@@ -45,23 +45,24 @@ def is_market_open_today() -> bool:
         client = _get_trading_client()
         clock = client.get_clock()
 
-        # clock.is_open: True if market is currently open
-        # clock.next_open / clock.next_close: timestamps for next open/close
         if clock.is_open:
             return True
 
-        # Market is currently closed. Check if it opens today.
-        # If next_open is today (ET), the market hasn't opened yet but will.
-        # If next_open is a future date, today is a holiday or weekend.
         now_et = datetime.now(clock.next_open.tzinfo)
         today = now_et.date()
         next_open_date = clock.next_open.date()
 
         if next_open_date == today:
-            # Market will open later today
             return True
 
-        # next_open is a future date — today is not a trading day
+        # Market is closed and next_open is a future date.
+        # Use the calendar API to check if today was a trading day
+        # (handles post-close EOD cycles correctly).
+        from alpaca.trading.requests import GetCalendarRequest
+        cal = client.get_calendar(GetCalendarRequest(start=today, end=today))
+        if cal and cal[0].date == today:
+            return True
+
         logger.info(
             "Market closed today (%s). Next open: %s.",
             today.isoformat(), clock.next_open.isoformat(),
