@@ -106,7 +106,7 @@ class IntradayCycleMixin:
                       f"P&L ${evt['pnl']:.0f}", flush=True)
 
         # ── Step 1: Sync portfolio ───────────────────────────────────────
-        portfolio = self._get_broker().sync(sim_date)
+        portfolio = self._get_broker().sync(sim_date, existing_positions=self.portfolio_state.positions)
         if portfolio.get('error'):
             logger.error("INTRADAY: portfolio sync failed: %s", portfolio['error'])
             return {"cycle_type": "INTRADAY", "error": "portfolio_sync_failed",
@@ -546,7 +546,7 @@ class IntradayCycleMixin:
 
         # Final sync
         if exits_placed or partial_exits_placed:
-            final_portfolio = self._get_broker().sync(sim_date)
+            final_portfolio = self._get_broker().sync(sim_date, existing_positions=self.portfolio_state.positions)
             if not final_portfolio.get('error'):
                 self.portfolio_state.cash = final_portfolio['cash']
                 self.portfolio_state.portfolio_value = final_portfolio['portfolio_value']

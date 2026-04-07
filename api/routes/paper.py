@@ -563,7 +563,25 @@ def sync_paper_positions():
         raise HTTPException(400, "No paper trading session found")
 
     try:
-        # Inject Alpaca keys into env so portfolio_sync can use them
+        # Inject Alpaca keys into env so portfolio_sync can use them.
+        # Cloud mode: resolve from Secrets Manager via SSM ARN lookup.
+        # Local mode: read from saved settings.
+        if is_cloud_mode():
+            try:
+                from api.routes.settings import _resolve_secret_arns
+                import boto3, json as _json
+                alpaca_arn, _ = _resolve_secret_arns()
+                if alpaca_arn:
+                    cfg = get_cloud_config() or {}
+                    sm = boto3.client("secretsmanager", region_name=cfg.get("region", "us-west-2"))
+                    resp = sm.get_secret_value(SecretId=alpaca_arn)
+                    secret = _json.loads(resp["SecretString"])
+                    acct = secret.get("paper", {})
+                    os.environ["ALPACA_API_KEY"] = acct.get("api_key", "")
+                    os.environ["ALPACA_SECRET_KEY"] = acct.get("secret_key", "")
+            except Exception as e:
+                logger.warning("Failed to load Alpaca keys from Secrets Manager: %s", e)
+
         saved_keys = read_settings().get("keys", {})
         paper_key = saved_keys.get("alpaca_paper_api_key", "")
         paper_secret = saved_keys.get("alpaca_paper_secret_key", "")

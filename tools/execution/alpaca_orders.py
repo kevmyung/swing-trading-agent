@@ -73,7 +73,7 @@ def place_bracket_order(
     take_profit_price: float | None = None,
     order_type: str = "market",
     limit_price: float | None = None,
-    time_in_force: str = "day",
+    time_in_force: str = "gtc",
 ) -> dict:
     """Place a bracket order via the Alpaca API with automatic stop-loss attachment.
 
@@ -91,8 +91,8 @@ def place_bracket_order(
         limit_price: Required when order_type is ``'limit'`` or ``'stop_limit'``.
                      For limit: max price willing to pay (buy) / min price (sell).
                      For stop_limit: limit price after stop trigger.
-        time_in_force: ``'day'`` (expires at close), ``'opg'`` (market-on-open),
-                       or ``'gtc'`` (good-till-cancelled).
+        time_in_force: ``'gtc'`` (good-till-cancelled, default for swing trading),
+                       ``'day'`` (expires at close), or ``'opg'`` (market-on-open).
 
     Returns:
         Dict with order details or ``error`` key if submission failed.

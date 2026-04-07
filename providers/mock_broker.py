@@ -84,7 +84,7 @@ class MockBroker(Broker):
     # Broker interface: sync
     # ------------------------------------------------------------------
 
-    def sync(self, sim_date: str | None = None) -> dict:
+    def sync(self, sim_date: str | None = None, existing_positions=None) -> dict:
         """Return mock sync response matching the Alpaca sync schema."""
         date_str = sim_date or "unknown"
         position_dicts = [

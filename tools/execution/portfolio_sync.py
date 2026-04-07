@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 try:
     from alpaca.trading.client import TradingClient
     from alpaca.trading.requests import GetOrdersRequest
-    from alpaca.trading.enums import QueryOrderStatus, OrderClass
+    from alpaca.trading.enums import QueryOrderStatus, OrderClass, OrderSide, TimeInForce
     _ALPACA_AVAILABLE = True
 except ImportError:
     _ALPACA_AVAILABLE = False
@@ -60,12 +60,18 @@ def _error_response(msg: str) -> dict:
     }
 
 
-def sync_positions_from_alpaca() -> dict:
+def sync_positions_from_alpaca(existing_positions=None) -> dict:
     """Sync all open positions, cash, and account metrics from Alpaca to local state.
 
     Fetches the live account state from Alpaca's REST API and reconciles it with
     the local PortfolioState. Detects positions that were closed since the last
     sync (stop-losses hit, manual exits, etc.) and records them as trades.
+
+    Args:
+        existing_positions: Optional dict of {symbol: Position} from caller
+            (e.g. agent state loaded from S3). When provided, used instead of
+            loading from local file — ensures metadata (strategy, entry_date,
+            stop_loss) is preserved in serverless environments.
 
     This function must be called at the START of every trading cycle and after
     any order is placed. Do not make decisions on stale local state.
@@ -105,9 +111,15 @@ def sync_positions_from_alpaca() -> dict:
         alpaca_positions = client.get_all_positions()
         alpaca_symbols = {p.symbol for p in alpaca_positions}
 
-        # --- Load local portfolio state ---
+        # --- Load portfolio state ---
         portfolio = PortfolioState(state_file=settings.state_file_path)
         portfolio.load()
+        # In cloud/serverless, local file may be empty. If caller provided
+        # positions (from S3 agent state), inject them so metadata is preserved.
+        if existing_positions:
+            for sym, pos in existing_positions.items():
+                if sym not in portfolio.positions:
+                    portfolio.positions[sym] = pos
 
         today_str = datetime.now(timezone.utc).date().isoformat()
 
@@ -162,6 +174,7 @@ def sync_positions_from_alpaca() -> dict:
                        if ap.symbol not in portfolio.positions}
         bracket_order_map: dict[str, str] = {}
         bracket_stop_map: dict[str, float] = {}
+        bracket_entry_date_map: dict[str, str] = {}
         if new_symbols and _ALPACA_AVAILABLE:
             try:
                 filled_orders = client.get_orders(
@@ -173,6 +186,10 @@ def sync_positions_from_alpaca() -> dict:
                     if sym in new_symbols and str(order_class).lower() == 'bracket':
                         if sym not in bracket_order_map:
                             bracket_order_map[sym] = str(order.id)
+                            # Extract entry date from filled_at
+                            filled_at = getattr(order, 'filled_at', None)
+                            if filled_at:
+                                bracket_entry_date_map[sym] = filled_at.strftime('%Y-%m-%d') if hasattr(filled_at, 'strftime') else str(filled_at)[:10]
                             # Extract stop price from bracket legs
                             legs = getattr(order, 'legs', None) or []
                             for leg in legs:
@@ -201,6 +218,7 @@ def sync_positions_from_alpaca() -> dict:
                 local.qty = qty
             else:
                 stop_price = bracket_stop_map.get(ap.symbol, 0.0)
+                entry_date = bracket_entry_date_map.get(ap.symbol, '')
                 portfolio.positions[ap.symbol] = Position(
                     symbol=ap.symbol,
                     qty=qty,
@@ -210,6 +228,7 @@ def sync_positions_from_alpaca() -> dict:
                     unrealized_pnl=unrealized_pl,
                     bracket_order_id=bracket_order_map.get(ap.symbol, ''),
                     highest_close=current_price,
+                    entry_date=entry_date,
                 )
                 if stop_price > 0:
                     logger.info(
@@ -225,6 +244,41 @@ def sync_positions_from_alpaca() -> dict:
                 'unrealized_pnl': unrealized_pl,
                 'market_value': market_value,
             })
+
+        # --- Ensure stop orders exist on Alpaca for all positions ---
+        # If state has a stop_loss_price but no open stop order on Alpaca,
+        # place a standalone GTC stop order. This covers cases where bracket
+        # orders expired (day TIF) or container restarts lost order state.
+        try:
+            open_orders = client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            )
+            symbols_with_stop = set()
+            for o in open_orders:
+                otype = str(getattr(o, 'type', '')).lower()
+                if otype in ('stop', 'stop_limit'):
+                    symbols_with_stop.add(o.symbol)
+
+            for sym, pos in portfolio.positions.items():
+                if pos.stop_loss_price > 0 and sym not in symbols_with_stop and sym in alpaca_symbols:
+                    try:
+                        from alpaca.trading.requests import StopOrderRequest
+                        stop_req = StopOrderRequest(
+                            symbol=sym,
+                            qty=pos.qty,
+                            side=OrderSide.SELL,
+                            stop_price=round(pos.stop_loss_price, 2),
+                            time_in_force=TimeInForce.GTC,
+                        )
+                        stop_order = client.submit_order(stop_req)
+                        logger.info(
+                            "portfolio_sync: placed missing GTC stop for %s @ %.2f (order=%s)",
+                            sym, pos.stop_loss_price, stop_order.id,
+                        )
+                    except Exception as stop_exc:
+                        logger.warning("portfolio_sync: failed to place stop for %s: %s", sym, stop_exc)
+        except Exception as exc:
+            logger.warning("portfolio_sync: stop order sync failed: %s", exc)
 
         # --- Update portfolio-level metrics ---
         portfolio.cash = cash

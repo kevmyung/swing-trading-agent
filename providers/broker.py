@@ -42,7 +42,7 @@ class Broker(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def sync(self, sim_date: str | None = None) -> dict:
+    def sync(self, sim_date: str | None = None, existing_positions=None) -> dict:
         """Fetch current portfolio state and return a sync response dict.
 
         Returns:

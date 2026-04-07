@@ -32,6 +32,20 @@ def get_mode():
 @router.get("/alpaca")
 def get_alpaca_status():
     """Check if Alpaca API keys are configured (not default placeholders)."""
+    # Cloud mode: check if Alpaca secret exists in Secrets Manager (via SSM)
+    if is_cloud_mode():
+        try:
+            from api.routes.settings import _resolve_secret_arns
+            alpaca_arn, _ = _resolve_secret_arns()
+            has_secret = bool(alpaca_arn)
+        except Exception:
+            has_secret = False
+        return {
+            "configured": has_secret,
+            "paper_configured": has_secret,
+            "live_configured": has_secret,
+        }
+
     settings = read_settings()
     keys = settings.get("keys", {})
     paper_configured = bool(

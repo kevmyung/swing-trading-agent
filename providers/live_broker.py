@@ -50,10 +50,10 @@ class AlpacaBroker(Broker):
     # Broker interface: sync
     # ------------------------------------------------------------------
 
-    def sync(self, sim_date: str | None = None) -> dict:
+    def sync(self, sim_date: str | None = None, existing_positions=None) -> dict:
         """Sync portfolio state from Alpaca and return sync response."""
         from tools.execution.portfolio_sync import sync_positions_from_alpaca
-        result = sync_positions_from_alpaca()
+        result = sync_positions_from_alpaca(existing_positions=existing_positions)
         if not result.get('error'):
             self._cash = result['cash']
             self._portfolio_value = result['portfolio_value']
@@ -87,8 +87,8 @@ class AlpacaBroker(Broker):
     ) -> dict:
         """Place a bracket order via Alpaca.
 
-        Uses 'day' TIF for bracket orders (Alpaca requires 'day' or 'gtc'
-        for bracket parent orders; 'opg' is not guaranteed to work).
+        Uses 'gtc' TIF for bracket orders so stop-loss legs persist
+        across trading sessions (swing trading requires overnight protection).
         """
         from tools.execution.alpaca_orders import place_bracket_order
         order_type = entry_type.lower()
@@ -100,7 +100,7 @@ class AlpacaBroker(Broker):
             take_profit_price=take_profit,
             order_type=order_type,
             limit_price=limit_price,
-            time_in_force='day',
+            time_in_force='gtc',
         )
         return result
 

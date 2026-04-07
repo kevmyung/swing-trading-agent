@@ -401,7 +401,7 @@ def _run_live_cycle_bg(session_id: str, params: InvocationInput, task_id: int):
             print(f"[THREAD] Step 3b: cash/value are $0 — running initial broker sync...", flush=True)
             try:
                 from tools.execution.portfolio_sync import sync_positions_from_alpaca
-                initial_sync = sync_positions_from_alpaca(settings)
+                initial_sync = sync_positions_from_alpaca(existing_positions=state.positions)
                 if not initial_sync.get('error'):
                     state.cash = initial_sync['cash']
                     state.portfolio_value = initial_sync['portfolio_value']
@@ -409,7 +409,14 @@ def _run_live_cycle_bg(session_id: str, params: InvocationInput, task_id: int):
                     # Sync positions and trade history into agent state
                     from state.portfolio_state import Position, Trade
                     for sym, pos_data in initial_sync.get('positions_full', {}).items():
-                        state.positions[sym] = Position.from_dict(pos_data)
+                        if sym not in state.positions:
+                            state.positions[sym] = Position.from_dict(pos_data)
+                        else:
+                            # Update live data, preserve metadata
+                            local = state.positions[sym]
+                            local.current_price = pos_data.get('current_price', local.current_price)
+                            local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
+                            local.qty = pos_data.get('qty', local.qty)
                     for t_data in initial_sync.get('trade_history', []):
                         state.trade_history.append(Trade.from_dict(t_data))
                     store.save_state(session_id, state.to_dict())

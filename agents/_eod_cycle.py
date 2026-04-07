@@ -97,7 +97,9 @@ class EODCycleMixin:
         clear_earnings_cache()
 
         # ── Step 1: Sync portfolio ────────────────────────────────────────────
-        portfolio = self._get_broker().sync()
+        portfolio = self._get_broker().sync(
+            existing_positions=self.portfolio_state.positions,
+        )
         if portfolio.get('error'):
             logger.error("EOD_SIGNAL: portfolio sync failed: %s", portfolio['error'])
             return {"cycle_type": "EOD_SIGNAL", "error": "portfolio_sync_failed",
@@ -109,7 +111,9 @@ class EODCycleMixin:
         self.portfolio_state.peak_value = max(
             self.portfolio_state.peak_value, portfolio['peak_value']
         )
-        # Sync positions from Alpaca into agent state
+        # Sync positions from Alpaca into agent state.
+        # Broker sync only knows price/qty — preserve metadata (strategy,
+        # entry_date, stop_loss, etc.) from agent state which was set at fill time.
         from state.portfolio_state import Position as _Pos
         positions_full = portfolio.get('positions_full', {})
         if positions_full:
@@ -119,9 +123,17 @@ class EODCycleMixin:
                     self.portfolio_state.positions[sym] = _Pos.from_dict(pos_data)
                 else:
                     local = self.portfolio_state.positions[sym]
+                    # Update live data from broker
                     local.current_price = pos_data.get('current_price', local.current_price)
                     local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
                     local.qty = pos_data.get('qty', local.qty)
+                    # Recover metadata if local state lost it (e.g. cold container)
+                    if not local.strategy and pos_data.get('strategy'):
+                        local.strategy = pos_data['strategy']
+                    if not local.entry_date and pos_data.get('entry_date'):
+                        local.entry_date = pos_data['entry_date']
+                    if local.stop_loss_price == 0 and pos_data.get('stop_loss_price', 0) > 0:
+                        local.stop_loss_price = pos_data['stop_loss_price']
             for sym in list(self.portfolio_state.positions.keys()):
                 if sym not in synced_syms:
                     del self.portfolio_state.positions[sym]
@@ -683,6 +695,7 @@ class EODCycleMixin:
             'drawdown_status': dd['status'],
             'heat_ceiling_breached': heat_ceiling_breached,
             # Rich data for frontend
+            'prompt': prompt,
             'screened': candidates,
             'decisions': _inject_auto_add_into_decisions(decisions, auto_add_signals),
             'entry_signals': entry_signals,
