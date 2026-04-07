@@ -705,6 +705,15 @@ class QuantEngine:
         }
 
         if df is None or df.empty or len(df) < 20:
+            # Minimal frontend-compatible aliases even without bar data
+            ctx['suggested_stop_loss'] = ctx['stop_loss_price']
+            ctx['suggested_take_profit'] = ctx['take_profit_price']
+            ctx['indicative_shares'] = pos.qty
+            ctx['atr_loss_pct'] = 0.0
+            ctx['rr_ratio'] = 0.0
+            ctx['macd_above_signal'] = None
+            ctx['mean_reversion_zscore'] = ctx.get('momentum_zscore')
+            ctx['signal_flags'] = {}
             return ctx
 
         closes = df['close'].tolist()
@@ -816,7 +825,14 @@ class QuantEngine:
 
             # Strategy-aware R:R remaining
             # MR: target is 20MA (the mean); MOM: target is ATR×3 from entry
-            is_mr = pos.strategy and pos.strategy.upper() == 'MEAN_REVERSION'
+            # If strategy is unknown, infer from price vs 20MA (below = MR, above = MOM)
+            if pos.strategy:
+                is_mr = pos.strategy.upper() == 'MEAN_REVERSION'
+            elif len(closes) >= 20:
+                ma20_infer = float(pd.Series(closes).rolling(20).mean().iloc[-1])
+                is_mr = current_price < ma20_infer
+            else:
+                is_mr = False
             if is_mr and len(closes) >= 20:
                 ma20 = float(pd.Series(closes).rolling(20).mean().iloc[-1])
                 implied_tp = ma20
@@ -919,6 +935,32 @@ class QuantEngine:
         wctx = compute_weekly_context(df, current_price)
         if wctx.get('weekly_trend_score') is not None:
             ctx['weekly'] = wctx
+
+        # ── Frontend-compatible aliases ──
+        # The quant table renders candidates and positions with the same columns.
+        # Map position-specific field names to the shared schema the frontend expects.
+        ctx['suggested_stop_loss'] = ctx['stop_loss_price']
+        ctx['suggested_take_profit'] = ctx['take_profit_price']
+        ctx['atr_loss_pct'] = round(atr / current_price, 4) if current_price > 0 and atr > 0 else 0.0
+        ctx['indicative_shares'] = pos.qty
+        ctx['rr_ratio'] = ctx.get('risk_reward_remaining', 0.0) or 0.0
+
+        # MACD above/below signal line
+        macd_line = macd_d.get('macd', 0.0)
+        signal_line = macd_d.get('signal', 0.0)
+        ctx['macd_above_signal'] = macd_line > signal_line
+
+        # MR z-score (reuse momentum_zscore for positions)
+        if ctx.get('mean_reversion_zscore') is None:
+            ctx['mean_reversion_zscore'] = ctx.get('momentum_zscore')
+
+        # Signal flags — position-relevant subset
+        ctx['signal_flags'] = {
+            'stop_placement': ctx.get('stop_placement', 'NO_REFERENCE'),
+            'ma_confluence': ctx.get('ma_confluence', False),
+            'volume_confirming': (ctx.get('volume_ratio') or 0) > 1.3,
+            'macd_confirming': ctx['macd_above_signal'],
+        }
 
         return ctx
 

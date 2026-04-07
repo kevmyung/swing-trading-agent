@@ -296,6 +296,7 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
   const entrySignals = (Array.isArray(meta.entry_signals) ? meta.entry_signals : []) as AnyRecord[];
   const exitSignals = (Array.isArray(meta.exit_signals) ? meta.exit_signals : []) as AnyRecord[];
   const playbooks = (meta.playbook_reads ?? []) as string[];
+  const prompt = (cycle.prompt ?? meta.prompt ?? '') as string;
   const researchEntries = Object.entries(research);
   const quantCandidates = (cycle.quant_context?.candidates ?? meta.quant_context?.candidates ?? {}) as Record<string, AnyRecord>;
   const quantPositions = (cycle.quant_context?.positions ?? meta.quant_context?.positions ?? {}) as Record<string, AnyRecord>;
@@ -309,6 +310,7 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
   if (researchEntries.length > 0) subTabs.push({ id: 'research', label: 'Research', count: researchEntries.length });
   if (skips.length > 0) subTabs.push({ id: 'skipped', label: 'Skipped', count: skips.length });
   if (playbooks.length > 0) subTabs.push({ id: 'playbooks', label: 'Playbooks', count: playbooks.length });
+  if (prompt) subTabs.push({ id: 'prompt', label: 'Prompt' });
   if (sessionId) subTabs.push({ id: 'backward', label: 'Backward' });
 
   return (
@@ -521,6 +523,13 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
             </div>
           </TabsContent>
 
+          {/* ── Prompt ── */}
+          {prompt && (
+            <TabsContent value="prompt" className="mt-3">
+              <pre className="text-[11px] whitespace-pre-wrap break-words bg-muted/50 rounded p-3 max-h-[600px] overflow-y-auto font-mono leading-relaxed">{prompt}</pre>
+            </TabsContent>
+          )}
+
           {/* ── Backward Returns ── */}
           {sessionId && (
             <TabsContent value="backward" className="mt-3">
@@ -554,6 +563,7 @@ function MorningCard({ cycle }: { cycle: CycleDetail }) {
   const quantPositions = (cycle.quant_context?.positions ?? meta.quant_context?.positions ?? {}) as Record<string, AnyRecord>;
   const quantCount = Object.keys(quantCandidates).length + Object.keys(quantPositions).length;
   const playbooks = (meta.playbook_reads ?? []) as string[];
+  const prompt = (cycle.prompt ?? meta.prompt ?? '') as string;
   const morningExitDetails = (meta.morning_exit_details ?? []) as {
     ticker: string; eod_action: string; morning_action: string; reason: string;
     fill_price?: number; pnl?: number;
@@ -567,6 +577,7 @@ function MorningCard({ cycle }: { cycle: CycleDetail }) {
   if (quantCount > 0) subTabs.push({ id: 'quant', label: 'Quant', count: quantCount });
   if (researchEntries.length > 0) subTabs.push({ id: 'research', label: 'Research', count: researchEntries.length });
   if (playbooks.length > 0) subTabs.push({ id: 'playbooks', label: 'Playbooks', count: playbooks.length });
+  if (prompt) subTabs.push({ id: 'prompt', label: 'Prompt' });
 
   return (
     <Card>
@@ -790,6 +801,13 @@ function MorningCard({ cycle }: { cycle: CycleDetail }) {
                   ))}
                 </div>
               </TabsContent>
+
+              {/* ── Prompt ── */}
+              {prompt && (
+                <TabsContent value="prompt" className="mt-3">
+                  <pre className="text-[11px] whitespace-pre-wrap break-words bg-muted/50 rounded p-3 max-h-[600px] overflow-y-auto font-mono leading-relaxed">{prompt}</pre>
+                </TabsContent>
+              )}
             </Tabs>
           </>
         )}
@@ -816,6 +834,7 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
   const quantPositions = (cycle.quant_context?.positions ?? meta.quant_context?.positions ?? {}) as Record<string, AnyRecord>;
   const quantCount = Object.keys(quantPositions).length;
   const playbooks = (meta.playbook_reads ?? []) as string[];
+  const prompt = (cycle.prompt ?? meta.prompt ?? '') as string;
 
   // Build sub-tabs dynamically
   const subTabs: { id: string; label: string; count?: number }[] = [];
@@ -824,6 +843,7 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
   if (decisions.length > 0) subTabs.push({ id: 'decisions', label: 'Decisions', count: decisions.length });
   if (flaggedEntries.length > 0) subTabs.push({ id: 'flagged', label: 'Flagged', count: flaggedEntries.length });
   if (playbooks.length > 0) subTabs.push({ id: 'playbooks', label: 'Playbooks', count: playbooks.length });
+  if (prompt) subTabs.push({ id: 'prompt', label: 'Prompt' });
 
   return (
     <Card>
@@ -1037,6 +1057,13 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
                 ))}
               </div>
             </TabsContent>
+
+            {/* ── Prompt ── */}
+            {prompt && (
+              <TabsContent value="prompt" className="mt-3">
+                <pre className="text-[11px] whitespace-pre-wrap break-words bg-muted/50 rounded p-3 max-h-[600px] overflow-y-auto font-mono leading-relaxed">{prompt}</pre>
+              </TabsContent>
+            )}
           </Tabs>
         )}
       </CardContent>

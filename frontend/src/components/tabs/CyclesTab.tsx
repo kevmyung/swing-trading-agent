@@ -959,6 +959,42 @@ function PlaybookPanel({ date, dayDetail }: { date: string; dayDetail: CycleDeta
 
 // ─── Metrics Tab ──────────────────────────────────────────────────────────────
 
+function PromptPanel({ dayDetail }: { dayDetail: CycleDetail | null }) {
+  const meta = dayDetail as Record<string, unknown> | null;
+  const eodPrompt = (dayDetail?.prompt ?? '') as string;
+  const mMeta = (meta?.morning_meta ?? {}) as Record<string, unknown>;
+  const iMeta = (meta?.intraday_meta ?? {}) as Record<string, unknown>;
+  const morningPrompt = (mMeta.prompt ?? '') as string;
+  const intradayPrompt = (iMeta.prompt ?? '') as string;
+
+  if (!eodPrompt && !morningPrompt && !intradayPrompt) {
+    return <p className="text-xs text-muted-foreground italic py-2">No prompt data available.</p>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {eodPrompt && (
+        <div>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">EOD Signal</p>
+          <pre className="text-[11px] whitespace-pre-wrap break-words bg-muted/50 rounded p-3 max-h-[600px] overflow-y-auto font-mono leading-relaxed">{eodPrompt}</pre>
+        </div>
+      )}
+      {morningPrompt && (
+        <div>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Morning</p>
+          <pre className="text-[11px] whitespace-pre-wrap break-words bg-muted/50 rounded p-3 max-h-[600px] overflow-y-auto font-mono leading-relaxed">{morningPrompt}</pre>
+        </div>
+      )}
+      {intradayPrompt && (
+        <div>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Intraday</p>
+          <pre className="text-[11px] whitespace-pre-wrap break-words bg-muted/50 rounded p-3 max-h-[600px] overflow-y-auto font-mono leading-relaxed">{intradayPrompt}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MetricsPanel({ dayDetail }: { dayDetail: CycleDetail | null }) {
   const broker = dayDetail?.broker;
   const tokenUsage = dayDetail?.token_usage;
@@ -1124,6 +1160,7 @@ function DayCard({ date, dayDetail, nextDayDetail, sessionId }: {
               <TabsTrigger value="quant" className="text-xs px-2">Quant</TabsTrigger>
               <TabsTrigger value="notes" className="text-xs px-2">Notes</TabsTrigger>
               <TabsTrigger value="playbook" className="text-xs px-2">Playbook</TabsTrigger>
+              <TabsTrigger value="prompt" className="text-xs px-2">Prompt</TabsTrigger>
               <TabsTrigger value="backward" className="text-xs px-2">Backward</TabsTrigger>
               <TabsTrigger value="forward" className="text-xs px-2">Forward</TabsTrigger>
               <TabsTrigger value="metrics" className="text-xs px-2">Metrics</TabsTrigger>
@@ -1135,6 +1172,7 @@ function DayCard({ date, dayDetail, nextDayDetail, sessionId }: {
             <TabsContent value="backward"><BackwardReturnsChart sessionId={sessionId} date={date} /></TabsContent>
             <TabsContent value="forward"><ForwardReturnsChart sessionId={sessionId} date={date} /></TabsContent>
             <TabsContent value="playbook"><PlaybookPanel date={date} dayDetail={dayDetail} /></TabsContent>
+            <TabsContent value="prompt"><PromptPanel dayDetail={dayDetail} /></TabsContent>
             <TabsContent value="metrics"><MetricsPanel dayDetail={dayDetail} /></TabsContent>
           </Tabs>
         </CardContent>
