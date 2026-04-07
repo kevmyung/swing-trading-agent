@@ -35,9 +35,11 @@ def _get_config() -> dict:
 
 
 def _is_market_open_today() -> bool:
-    """Check if the US stock market is open today using Alpaca's clock API.
+    """Check if the US stock market is/was open today using Alpaca's calendar API.
 
-    Uses raw HTTP (no alpaca-py dependency). Fails open on errors.
+    Uses raw HTTP (no alpaca-py dependency). Handles post-close EOD triggers
+    by checking the calendar for today's date, not just the clock.
+    Fails open on errors.
     """
     secret_arn = os.environ.get("ALPACA_SECRET_ARN", "")
     if not secret_arn:
@@ -47,8 +49,6 @@ def _is_market_open_today() -> bool:
     try:
         resp = secrets.get_secret_value(SecretId=secret_arn)
         creds = json.loads(resp["SecretString"])
-        # Secret structure: {"paper": {"api_key": ..., "secret_key": ...}, "live": {...}}
-        # Scheduler config determines mode; default to paper for safety
         mode_config = _get_config()
         mode = mode_config.get("mode", "paper")
         mode_creds = creds.get(mode, creds.get("paper", {}))
@@ -56,35 +56,28 @@ def _is_market_open_today() -> bool:
         secret_key = mode_creds.get("secret_key", "")
 
         base_url = "https://paper-api.alpaca.markets" if mode == "paper" else "https://api.alpaca.markets"
+        headers = {
+            "APCA-API-KEY-ID": api_key,
+            "APCA-API-SECRET-KEY": secret_key,
+        }
+
+        from datetime import datetime, timezone, timedelta
+        et_offset = timezone(timedelta(hours=-4))  # EDT
+        today_str = datetime.now(et_offset).strftime("%Y-%m-%d")
+
+        # Use Calendar API: if today is in the calendar, the market was open today
         req = Request(
-            f"{base_url}/v2/clock",
-            headers={
-                "APCA-API-KEY-ID": api_key,
-                "APCA-API-SECRET-KEY": secret_key,
-            },
+            f"{base_url}/v2/calendar?start={today_str}&end={today_str}",
+            headers=headers,
         )
         with urlopen(req, timeout=5) as resp:
-            clock = json.loads(resp.read().decode())
+            cal = json.loads(resp.read().decode())
 
-        if clock.get("is_open"):
+        if cal and cal[0].get("date") == today_str:
             return True
 
-        # Market is closed now. Check if next_open is today.
-        next_open = clock.get("next_open", "")
-        if next_open:
-            # next_open format: "2026-04-04T13:30:00Z" or with offset
-            next_open_date = next_open[:10]
-            from datetime import datetime, timezone, timedelta
-            # Current time in US/Eastern
-            et_offset = timezone(timedelta(hours=-4))  # EDT (summer)
-            now_et = datetime.now(et_offset)
-            today_str = now_et.strftime("%Y-%m-%d")
-            if next_open_date == today_str:
-                return True
-            logger.info("Market closed today (%s). Next open: %s.", today_str, next_open_date)
-            return False
-
-        return True
+        logger.info("Market closed today (%s) — not in calendar.", today_str)
+        return False
     except Exception as exc:
         logger.warning("Market calendar check failed (%s) — assuming open.", exc)
         return True
