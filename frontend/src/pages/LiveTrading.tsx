@@ -23,6 +23,17 @@ import { fmt, fmtPct, formatSessionId } from '@/lib/format';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+const ACTION_BADGE: Record<string, string> = {
+  LONG: 'bg-gain-bg text-gain',
+  ADD: 'bg-gain-bg text-gain',
+  EXIT: 'bg-loss-bg text-loss',
+  PARTIAL_EXIT: 'bg-loss-bg text-loss',
+  HOLD: 'bg-secondary text-secondary-foreground',
+  TIGHTEN: 'bg-chart-5/10 text-chart-5',
+  SKIP: 'bg-muted text-muted-foreground',
+  WATCH: 'bg-chart-4/10 text-chart-4',
+};
+
 function convictionBadge(c?: string) {
   if (!c) return null;
   const colors: Record<string, string> = {
@@ -281,13 +292,15 @@ function EodQuantTable({ candidates, positions }: { candidates: Record<string, A
   );
 }
 
-function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: string }) {
+function EodSignalCard({ cycle, sessionId, defaultOpen = false }: { cycle: CycleDetail; sessionId?: string; defaultOpen?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultOpen);
   const meta = cycle as AnyRecord;
   const decisions = cycle.decisions ?? [];
   const longs = decisions.filter((d) => d.action === 'LONG');
   const exits = decisions.filter((d) => d.action === 'EXIT' || d.action === 'PARTIAL_EXIT');
   const skips = decisions.filter((d) => d.action === 'SKIP');
   const watches = decisions.filter((d) => d.action === 'WATCH');
+  const holds = decisions.filter((d) => d.action === 'HOLD' || d.action === 'TIGHTEN');
   const regime = cycle.quant_context?.regime ?? meta.regime ?? '-';
   const strategy = cycle.quant_context?.strategy ?? meta.strategy ?? '';
   const confidence = cycle.quant_context?.regime_confidence ?? meta.regime_confidence;
@@ -302,9 +315,12 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
   const quantPositions = (cycle.quant_context?.positions ?? meta.quant_context?.positions ?? {}) as Record<string, AnyRecord>;
   const quantCount = Object.keys(quantCandidates).length + Object.keys(quantPositions).length;
 
+  // Merge entry signal details (price/stop/shares) into decisions for unified table
+  const entrySignalMap: Record<string, AnyRecord> = {};
+  for (const s of entrySignals) entrySignalMap[s.ticker] = s;
+
   // Build sub-tabs dynamically based on available data
   const subTabs: { id: string; label: string; count?: number }[] = [];
-  subTabs.push({ id: 'signals', label: 'Signals', count: entrySignals.length + exitSignals.length });
   if (decisions.length > 0) subTabs.push({ id: 'decisions', label: 'Decisions', count: decisions.length });
   if (quantCount > 0) subTabs.push({ id: 'quant', label: 'Quant', count: quantCount });
   if (researchEntries.length > 0) subTabs.push({ id: 'research', label: 'Research', count: researchEntries.length });
@@ -315,22 +331,39 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
+      <CardHeader className="pb-2 cursor-pointer select-none" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/30">EOD_SIGNAL</Badge>
             <span className="text-xs text-muted-foreground">{cycle.date}</span>
+            <span className="text-[10px] text-muted-foreground/50">{expanded ? '▾' : '▸'}</span>
+            {!expanded && <>
+              {longs.map((d) => (
+                <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.LONG}`}>{d.ticker} LONG{d.half_size ? ' ½' : ''}</Badge>
+              ))}
+              {exits.map((d) => (
+                <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE[d.action] ?? ACTION_BADGE.EXIT}`}>{d.ticker} {d.action}</Badge>
+              ))}
+              {watches.map((d) => (
+                <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.WATCH}`}>{d.ticker} WATCH</Badge>
+              ))}
+              {holds.length > 0 && (
+                <span className="text-[10px] text-muted-foreground">{holds.length} held</span>
+              )}
+              {skips.length > 0 && (
+                <span className="text-[10px] text-muted-foreground">{skips.length} skipped</span>
+              )}
+            </>}
           </CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-[10px]">{regime}</Badge>
-            {strategy && <Badge variant="outline" className="text-[10px]">{strategy}</Badge>}
-            {confidence != null && (
-              <span className="text-[10px] text-muted-foreground">{(Number(confidence) * 100).toFixed(0)}% conf</span>
-            )}
-          </div>
+          {!expanded && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Badge variant="secondary" className="text-[10px]">{regime}</Badge>
+              {confidence != null && <span className="text-[10px] text-muted-foreground">{(Number(confidence) * 100).toFixed(0)}%</span>}
+            </div>
+          )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      {expanded && <CardContent className="space-y-3">
         {/* Pipeline stats */}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           <span className="text-muted-foreground">Screened: <span className="font-mono text-foreground">{screened.length || meta.candidates_evaluated || 0}</span></span>
@@ -341,7 +374,7 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
         </div>
 
         {/* Sub-tabs */}
-        <Tabs defaultValue="signals">
+        <Tabs defaultValue="decisions">
           <TabsList className="h-7">
             {subTabs.map((t) => (
               <TabsTrigger key={t.id} value={t.id} className="text-[11px] px-2 py-0.5 h-6">
@@ -350,120 +383,59 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
             ))}
           </TabsList>
 
-          {/* ── Signals ── */}
-          <TabsContent value="signals" className="mt-3 space-y-3">
-            {entrySignals.length > 0 && (
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Entry Signals</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-[11px] px-2">Ticker</TableHead>
-                      <TableHead className="text-[11px] px-2">Conviction</TableHead>
-                      <TableHead className="text-[11px] px-2">Strategy</TableHead>
-                      <TableHead className="text-[11px] px-2">Entry</TableHead>
-                      <TableHead className="text-[11px] px-2">Stop</TableHead>
-                      <TableHead className="text-[11px] px-2">Shares</TableHead>
-                      <TableHead className="text-[11px] px-2">Reasoning</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {entrySignals.map((s, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="font-medium text-xs px-2">
-                          <TickerLink ticker={s.ticker} />
-                          {s.half_size && <Badge variant="secondary" className="text-[9px] ml-1">HALF</Badge>}
-                        </TableCell>
-                        <TableCell className="px-2">{convictionBadge(s.conviction)}</TableCell>
-                        <TableCell className="text-xs px-2">
-                          <Badge variant="secondary" className="text-[10px]">{s.strategy ?? '-'}</Badge>
-                        </TableCell>
-                        <TableCell className="text-xs font-mono px-2">
-                          ${Number(s.entry_price ?? s.limit_price ?? 0).toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-xs font-mono px-2">
-                          ${Number(s.stop_loss_price ?? s.suggested_stop_loss ?? s.stop_loss ?? 0).toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-xs font-mono px-2">{s.shares ?? s.qty ?? '-'}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground px-2 max-w-[250px]">
-                          <span className="line-clamp-2">{s.reason || s.for || '-'}</span>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-
-            {exitSignals.length > 0 && (
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Exit / Position Review Signals</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-[11px] px-2">Ticker</TableHead>
-                      <TableHead className="text-[11px] px-2">Action</TableHead>
-                      <TableHead className="text-[11px] px-2">Conviction</TableHead>
-                      <TableHead className="text-[11px] px-2">Reasoning</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {exitSignals.map((s, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="font-medium text-xs px-2"><TickerLink ticker={s.ticker} /></TableCell>
-                        <TableCell className="px-2">
-                          <Badge variant="outline" className={`text-[10px] ${s.action === 'HOLD' ? '' : 'bg-loss-bg text-loss border-loss/30'}`}>
-                            {s.action}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="px-2">{convictionBadge(s.conviction)}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground px-2 max-w-[350px]">
-                          <span className="line-clamp-2">{s.reason || s.for || '-'}</span>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-
-            {entrySignals.length === 0 && exitSignals.length === 0 && (
-              <p className="text-xs text-muted-foreground">No signals generated.</p>
-            )}
-          </TabsContent>
-
-          {/* ── All PM Decisions ── */}
+          {/* ── Decisions (unified) ── */}
           <TabsContent value="decisions" className="mt-3">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-[11px] px-2">Ticker</TableHead>
                   <TableHead className="text-[11px] px-2">Action</TableHead>
-                  <TableHead className="text-[11px] px-2">Conviction</TableHead>
+                  <TableHead className="text-[11px] px-2">Conv.</TableHead>
                   <TableHead className="text-[11px] px-2">For</TableHead>
                   <TableHead className="text-[11px] px-2">Against</TableHead>
+                  <TableHead className="text-[11px] px-2">Price</TableHead>
+                  <TableHead className="text-[11px] px-2">Entry</TableHead>
+                  <TableHead className="text-[11px] px-2">Stop</TableHead>
+                  <TableHead className="text-[11px] px-2">Shares</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {decisions.map((d, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="font-medium text-xs px-2"><TickerLink ticker={d.ticker} /></TableCell>
-                    <TableCell className="px-2">
-                      <Badge variant="outline" className={`text-[10px] ${
-                        d.action === 'LONG' ? 'bg-gain/10 text-gain border-gain/30' :
-                        d.action === 'EXIT' || d.action === 'PARTIAL_EXIT' ? 'bg-loss-bg text-loss border-loss/30' :
-                        d.action === 'SKIP' ? 'bg-muted text-muted-foreground' : ''
-                      }`}>{d.action}</Badge>
-                    </TableCell>
-                    <TableCell className="px-2">{convictionBadge(d.conviction)}</TableCell>
-                    <TableCell className="text-[11px] text-muted-foreground px-2 max-w-[200px]">
-                      <span className="line-clamp-2">{d.for ?? d.reason ?? '-'}</span>
-                    </TableCell>
-                    <TableCell className="text-[11px] text-muted-foreground px-2 max-w-[200px]">
-                      <span className="line-clamp-2">{d.against ?? '-'}</span>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {[...decisions].sort((a, b) => {
+                  const rank: Record<string, number> = { LONG: 0, ADD: 0, EXIT: 1, PARTIAL_EXIT: 1, HOLD: 2, TIGHTEN: 2, WATCH: 3, SKIP: 4 };
+                  return (rank[a.action] ?? 5) - (rank[b.action] ?? 5);
+                }).map((d, i) => {
+                  const dm = d as AnyRecord;
+                  const sig = entrySignalMap[d.ticker];
+                  const qc = quantCandidates[d.ticker] ?? quantPositions[d.ticker] ?? {};
+                  const price = qc.current_price ?? dm.current_price ?? dm.price;
+                  const entry = sig?.entry_price ?? sig?.limit_price ?? qc.entry_price ?? dm.entry_price;
+                  const stop = sig?.stop_loss_price ?? sig?.suggested_stop_loss ?? sig?.stop_loss
+                    ?? qc.suggested_stop_loss ?? qc.stop_loss_price ?? dm.current_stop_loss;
+                  const shares = sig?.shares ?? sig?.qty ?? qc.qty ?? qc.indicative_shares ?? dm.qty;
+                  const isActionable = d.action !== 'SKIP';
+                  return (
+                    <TableRow key={i} className={isActionable ? 'bg-muted/30' : ''}>
+                      <TableCell className="font-medium text-xs px-2">
+                        <TickerLink ticker={d.ticker} />
+                        {(dm.half_size || sig?.half_size) && <span className="text-[9px] text-muted-foreground ml-0.5">½</span>}
+                      </TableCell>
+                      <TableCell className="px-2">
+                        <Badge className={`text-[10px] ${ACTION_BADGE[d.action] ?? ''}`}>{d.action}</Badge>
+                      </TableCell>
+                      <TableCell className="px-2">{convictionBadge(d.conviction)}</TableCell>
+                      <TableCell className="text-[11px] text-muted-foreground px-2 max-w-[200px]">
+                        <span className="line-clamp-2">{d.for ?? d.reason ?? '-'}</span>
+                      </TableCell>
+                      <TableCell className="text-[11px] text-muted-foreground px-2 max-w-[200px]">
+                        <span className="line-clamp-2">{d.against ?? '-'}</span>
+                      </TableCell>
+                      <TableCell className="text-xs font-mono px-2">{price ? `$${Number(price).toFixed(2)}` : '-'}</TableCell>
+                      <TableCell className="text-xs font-mono px-2">{entry ? `$${Number(entry).toFixed(2)}` : '-'}</TableCell>
+                      <TableCell className="text-xs font-mono px-2">{stop ? `$${Number(stop).toFixed(2)}` : '-'}</TableCell>
+                      <TableCell className="text-xs font-mono px-2">{shares ?? '-'}</TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TabsContent>
@@ -537,14 +509,15 @@ function EodSignalCard({ cycle, sessionId }: { cycle: CycleDetail; sessionId?: s
             </TabsContent>
           )}
         </Tabs>
-      </CardContent>
+      </CardContent>}
     </Card>
   );
 }
 
 // ─── Morning Execution Card ─────────────────────────────────────────────────
 
-function MorningCard({ cycle }: { cycle: CycleDetail }) {
+function MorningCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defaultOpen?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultOpen);
   const meta = cycle as AnyRecord;
   const ordersPlaced = Number(meta.orders_placed ?? 0);
   const exitsPlaced = Number(meta.exits_placed ?? 0);
@@ -581,27 +554,36 @@ function MorningCard({ cycle }: { cycle: CycleDetail }) {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
+      <CardHeader className="pb-2 cursor-pointer select-none" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="text-[10px] bg-chart-2/10 text-chart-2 border-chart-2/30">MORNING</Badge>
             <span className="text-xs text-muted-foreground">{cycle.date}</span>
+            <span className="text-[10px] text-muted-foreground/50">{expanded ? '▾' : '▸'}</span>
+            {!expanded && !skippedReason && <>
+              {decisions.filter((d) => d.action === 'LONG').map((d) => (
+                <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.LONG}`}>{d.ticker} LONG</Badge>
+              ))}
+              {decisions.filter((d) => d.action === 'EXIT' || d.action === 'PARTIAL_EXIT').map((d) => (
+                <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.EXIT}`}>{d.ticker} {d.action}</Badge>
+              ))}
+            </>}
           </CardTitle>
-          <div className="flex items-center gap-2">
-            {skippedReason ? (
-              <Badge variant="secondary" className="text-[10px]">Skipped</Badge>
-            ) : (
-              <>
-                <Badge variant="secondary" className="text-[10px]">{regime}</Badge>
-                {confidence != null && (
-                  <span className="text-[10px] text-muted-foreground">{(Number(confidence) * 100).toFixed(0)}% conf</span>
-                )}
-              </>
-            )}
-          </div>
+          {!expanded && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {skippedReason ? (
+                <Badge variant="secondary" className="text-[10px]">Skipped</Badge>
+              ) : (
+                <>
+                  <Badge variant="secondary" className="text-[10px]">{regime}</Badge>
+                  {confidence != null && <span className="text-[10px] text-muted-foreground">{(Number(confidence) * 100).toFixed(0)}%</span>}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      {expanded && <CardContent className="space-y-3">
         {skippedReason ? (
           <p className="text-xs text-muted-foreground">{skippedReason}</p>
         ) : (
@@ -811,14 +793,15 @@ function MorningCard({ cycle }: { cycle: CycleDetail }) {
             </Tabs>
           </>
         )}
-      </CardContent>
+      </CardContent>}
     </Card>
   );
 }
 
 // ─── Intraday Management Card ───────────────────────────────────────────────
 
-function IntradayCard({ cycle }: { cycle: CycleDetail }) {
+function IntradayCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defaultOpen?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultOpen);
   const meta = cycle as AnyRecord;
   const positionsManaged = Number(meta.positions_managed ?? 0);
   const positionsFlagged = Number(meta.positions_flagged ?? 0);
@@ -833,13 +816,14 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
   const flaggedEntries = Object.entries(flaggedDetails);
   const quantPositions = (cycle.quant_context?.positions ?? meta.quant_context?.positions ?? {}) as Record<string, AnyRecord>;
   const quantCount = Object.keys(quantPositions).length;
+  const dayEvents = (meta.day_events ?? cycle.events ?? []) as AnyRecord[];
+  const stopHits = dayEvents.filter((e) => e.action === 'STOP_LOSS_HIT' || e.action === 'STOP_LOSS' || e.action === 'STOP_EXIT');
   const playbooks = (meta.playbook_reads ?? []) as string[];
   const prompt = (cycle.prompt ?? meta.prompt ?? '') as string;
 
   // Build sub-tabs dynamically
   const subTabs: { id: string; label: string; count?: number }[] = [];
-  subTabs.push({ id: 'overview', label: 'Overview', count: autoDetails.length });
-  if (quantCount > 0) subTabs.push({ id: 'positions', label: 'Positions', count: quantCount });
+  if (quantCount > 0 || autoDetails.length > 0) subTabs.push({ id: 'positions', label: 'Positions', count: quantCount });
   if (decisions.length > 0) subTabs.push({ id: 'decisions', label: 'Decisions', count: decisions.length });
   if (flaggedEntries.length > 0) subTabs.push({ id: 'flagged', label: 'Flagged', count: flaggedEntries.length });
   if (playbooks.length > 0) subTabs.push({ id: 'playbooks', label: 'Playbooks', count: playbooks.length });
@@ -847,25 +831,42 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
+      <CardHeader className="pb-2 cursor-pointer select-none" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="text-[10px] bg-chart-3/10 text-chart-3 border-chart-3/30">INTRADAY</Badge>
             <span className="text-xs text-muted-foreground">{cycle.date}</span>
+            <span className="text-[10px] text-muted-foreground/50">{expanded ? '▾' : '▸'}</span>
+            {!expanded && <>
+              {stopHits.map((e, i) => (
+                <Badge key={`sh-${i}`} className="text-[10px] bg-loss-bg text-loss">{String(e.ticker)} STOP</Badge>
+              ))}
+              {decisions.filter((d) => {
+                const a = (d.action ?? (d as AnyRecord).decision ?? '') as string;
+                return a !== 'HOLD';
+              }).map((d) => {
+                const action = (d.action ?? (d as AnyRecord).decision ?? '') as string;
+                return (
+                  <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE[action] ?? ''}`}>{d.ticker} {action}</Badge>
+                );
+              })}
+              {(() => {
+                const holdCount = decisions.filter((d) => (d.action ?? (d as AnyRecord).decision) === 'HOLD').length;
+                return holdCount > 0 ? <span className="text-[10px] text-muted-foreground">{holdCount} held</span> : null;
+              })()}
+            </>}
           </CardTitle>
-          <div className="flex items-center gap-2">
-            {marketShock && (
-              <Badge variant="outline" className="text-[10px] bg-loss-bg text-loss border-loss/30 animate-pulse">
-                MARKET SHOCK
-              </Badge>
-            )}
-            {llmSkipped && (
-              <Badge variant="secondary" className="text-[10px]">LLM Skipped</Badge>
-            )}
-          </div>
+          {!expanded && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {marketShock && (
+                <Badge variant="outline" className="text-[10px] bg-loss-bg text-loss border-loss/30 animate-pulse">MARKET SHOCK</Badge>
+              )}
+              {llmSkipped && <Badge variant="secondary" className="text-[10px]">LLM Skipped</Badge>}
+            </div>
+          )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      {expanded && <CardContent className="space-y-3">
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           <span className="text-muted-foreground">
             Managed: <span className="font-mono text-foreground">{positionsManaged}</span>
@@ -895,7 +896,7 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
         {positionsManaged === 0 && autoDetails.length === 0 ? (
           <p className="text-xs text-muted-foreground">No positions to manage.</p>
         ) : (
-          <Tabs defaultValue="overview">
+          <Tabs defaultValue="positions">
             <TabsList className="h-7">
               {subTabs.map((t) => (
                 <TabsTrigger key={t.id} value={t.id} className="text-[11px] px-2 py-0.5 h-6">
@@ -904,51 +905,28 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
               ))}
             </TabsList>
 
-            {/* ── Overview ── */}
-            <TabsContent value="overview" className="mt-3 space-y-3">
-              {autoDetails.length > 0 && (
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Stop Adjustments</p>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-[11px] px-2">Ticker</TableHead>
-                        <TableHead className="text-[11px] px-2">Old Stop</TableHead>
-                        <TableHead className="text-[11px] px-2">New Stop</TableHead>
-                        <TableHead className="text-[11px] px-2">Change</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {autoDetails.map((d, i) => {
-                        const pctChange = d.old_stop > 0 ? ((d.new_stop - d.old_stop) / d.old_stop) * 100 : 0;
-                        return (
-                          <TableRow key={i}>
-                            <TableCell className="font-medium text-xs px-2">
-                              <TickerLink ticker={d.ticker} />
-                            </TableCell>
-                            <TableCell className="text-xs font-mono px-2 text-muted-foreground">
-                              ${d.old_stop.toFixed(2)}
-                            </TableCell>
-                            <TableCell className="text-xs font-mono px-2 text-gain">
-                              ${d.new_stop.toFixed(2)}
-                            </TableCell>
-                            <TableCell className="text-xs font-mono px-2 text-gain">
-                              +{pctChange.toFixed(1)}%
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+            {/* ── Positions (with stop adjustments) ── */}
+            <TabsContent value="positions" className="mt-3 space-y-3">
+              {stopHits.length > 0 && (
+                <div className="flex flex-wrap gap-1 text-xs">
+                  <span className="text-loss">Stop hit:</span>
+                  {stopHits.map((e, i) => (
+                    <Badge key={i} variant="outline" className="text-[10px] bg-loss-bg text-loss border-loss/30">
+                      {String(e.ticker)} @${Number(e.exit_price ?? 0).toFixed(2)} P&L ${Number(e.pnl ?? 0) >= 0 ? '+' : ''}{Number(e.pnl ?? 0).toFixed(0)}
+                    </Badge>
+                  ))}
                 </div>
               )}
-              {autoDetails.length === 0 && (
-                <p className="text-xs text-muted-foreground">No stop adjustments this cycle.</p>
+              {autoDetails.length > 0 && (
+                <div className="flex flex-wrap gap-1 text-xs">
+                  <span className="text-muted-foreground">Stops tightened:</span>
+                  {autoDetails.map((d, i) => (
+                    <Badge key={i} variant="outline" className="text-[10px] bg-gain/10 text-gain border-gain/30">
+                      {d.ticker} ${d.new_stop.toFixed(2)}
+                    </Badge>
+                  ))}
+                </div>
               )}
-            </TabsContent>
-
-            {/* ── Positions / Quant ── */}
-            <TabsContent value="positions" className="mt-3">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1001,27 +979,26 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
                   <TableRow>
                     <TableHead className="text-[11px] px-2">Ticker</TableHead>
                     <TableHead className="text-[11px] px-2">Action</TableHead>
-                    <TableHead className="text-[11px] px-2">Conviction</TableHead>
-                    <TableHead className="text-[11px] px-2">Reason</TableHead>
+                    <TableHead className="text-[11px] px-2">Conv.</TableHead>
+                    <TableHead className="text-[11px] px-2">For</TableHead>
+                    <TableHead className="text-[11px] px-2">Against</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {decisions.map((d, i) => {
-                    const action = (d.action ?? d.decision ?? 'HOLD').toUpperCase();
+                    const action = (d.action ?? (d as AnyRecord).decision ?? 'HOLD').toUpperCase();
                     return (
-                      <TableRow key={i}>
+                      <TableRow key={i} className={action !== 'HOLD' ? 'bg-muted/30' : ''}>
                         <TableCell className="font-medium text-xs px-2"><TickerLink ticker={d.ticker} /></TableCell>
                         <TableCell className="px-2">
-                          <Badge variant="outline" className={`text-[10px] ${
-                            action === 'EXIT' ? 'bg-loss-bg text-loss border-loss/30' :
-                            action === 'PARTIAL_EXIT' ? 'bg-chart-5/10 text-chart-5 border-chart-5/30' :
-                            action === 'TIGHTEN' ? 'bg-gain/10 text-gain border-gain/30' :
-                            ''
-                          }`}>{action}</Badge>
+                          <Badge className={`text-[10px] ${ACTION_BADGE[action] ?? ''}`}>{action}</Badge>
                         </TableCell>
                         <TableCell className="px-2">{convictionBadge(d.conviction)}</TableCell>
-                        <TableCell className="text-[11px] text-muted-foreground px-2 max-w-[300px]">
-                          <span className="line-clamp-2">{d.reason ?? '-'}</span>
+                        <TableCell className="text-[11px] text-muted-foreground px-2 max-w-[250px]">
+                          <span className="line-clamp-2">{d.for ?? d.reason ?? '-'}</span>
+                        </TableCell>
+                        <TableCell className="text-[11px] text-muted-foreground px-2 max-w-[250px]">
+                          <span className="line-clamp-2">{d.against ?? '-'}</span>
                         </TableCell>
                       </TableRow>
                     );
@@ -1066,7 +1043,7 @@ function IntradayCard({ cycle }: { cycle: CycleDetail }) {
             )}
           </Tabs>
         )}
-      </CardContent>
+      </CardContent>}
     </Card>
   );
 }
