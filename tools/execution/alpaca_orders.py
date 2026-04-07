@@ -384,6 +384,39 @@ def cancel_order(order_id: str) -> dict:
         return {'order_id': order_id, 'cancelled': False, 'error': str(exc)}
 
 
+def cancel_open_orders_for_symbol(symbol: str) -> dict:
+    """Cancel ALL open orders for a given symbol.
+
+    Used before placing exit orders to release shares held by
+    existing stop/bracket orders.
+
+    Returns:
+        Dict with ``symbol``, ``cancelled_count``, ``errors``.
+    """
+    if not _ALPACA_AVAILABLE:
+        return {'symbol': symbol, 'cancelled_count': 0, 'errors': ['alpaca-py not installed']}
+
+    try:
+        client = _get_trading_client()
+        orders = client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+        )
+        cancelled = 0
+        errors = []
+        for order in orders:
+            try:
+                client.cancel_order_by_id(order.id)
+                cancelled += 1
+            except Exception as exc:
+                errors.append(f"{order.id}: {exc}")
+        logger.info("cancel_open_orders_for_symbol(%s): cancelled %d, errors=%d",
+                     symbol, cancelled, len(errors))
+        return {'symbol': symbol, 'cancelled_count': cancelled, 'errors': errors}
+    except Exception as exc:
+        logger.error("Failed to cancel orders for %s: %s", symbol, exc)
+        return {'symbol': symbol, 'cancelled_count': 0, 'errors': [str(exc)]}
+
+
 def get_open_orders() -> dict:
     """Retrieve all open and pending orders from Alpaca.
 

@@ -118,7 +118,7 @@ class AlpacaBroker(Broker):
         Also cancels the bracket order (stop+TP legs) before placing
         the exit to avoid conflicting orders.
         """
-        from tools.execution.alpaca_orders import place_market_order, cancel_order
+        from tools.execution.alpaca_orders import place_market_order, cancel_open_orders_for_symbol
         pos = self._positions.get(ticker)
         if pos is None and qty is None:
             logger.warning("AlpacaBroker.execute_exit: no position for %s", ticker)
@@ -127,15 +127,11 @@ class AlpacaBroker(Broker):
         if sell_qty is None:
             sell_qty = max(1, int(pos.qty * exit_pct))
 
-        # Cancel existing bracket order to avoid conflicting stop/TP legs
-        bid = pos.bracket_order_id if pos else None
-        if bid:
-            cancel_result = cancel_order(bid)
-            if cancel_result.get('cancelled'):
-                logger.info("AlpacaBroker.execute_exit: cancelled bracket %s for %s", bid, ticker)
-            else:
-                logger.debug("AlpacaBroker.execute_exit: bracket cancel for %s — %s",
-                             ticker, cancel_result.get('error', 'already cancelled'))
+        # Cancel ALL open orders for this symbol to release held shares
+        cancel_result = cancel_open_orders_for_symbol(ticker)
+        if cancel_result['cancelled_count'] > 0:
+            logger.info("AlpacaBroker.execute_exit: cancelled %d open orders for %s",
+                        cancel_result['cancelled_count'], ticker)
 
         result = place_market_order(
             symbol=ticker, qty=sell_qty, side='sell', time_in_force='day',

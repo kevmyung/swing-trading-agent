@@ -37,6 +37,7 @@ The agent runs three trading cycles per day, each designed for a specific decisi
 |----------|---------|
 | [Alpaca Markets](https://alpaca.markets/) | Broker API — order execution, positions, account data (paper + live) |
 | [yfinance](https://github.com/ranaroussi/yfinance) | Market data — daily/hourly bars, SPY benchmarks |
+| [Polygon.io](https://polygon.io/) | Historical news articles with per-ticker sentiment (used in backtesting) |
 
 ## Features
 
@@ -76,6 +77,7 @@ Once satisfied with backtest results, connect to Alpaca's paper trading environm
 - **Python 3.11+** (for the agent runtime and API server)
 - **AWS CLI** configured (`aws sts get-caller-identity` should succeed)
 - **Alpaca API keys** (free [paper trading account](https://app.alpaca.markets/signup))
+- **Polygon.io API key** *(optional)* — required for news-informed backtesting. Without it, backtests run with neutral sentiment (no news signals). Free tier works. Live/paper trading uses yfinance for news instead.
 
 ## Deployment
 
