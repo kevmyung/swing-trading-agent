@@ -118,7 +118,9 @@ class AlpacaBroker(Broker):
         Also cancels the bracket order (stop+TP legs) before placing
         the exit to avoid conflicting orders.
         """
-        from tools.execution.alpaca_orders import place_market_order, cancel_open_orders_for_symbol
+        from tools.execution.alpaca_orders import (
+            place_market_order, cancel_open_orders_for_symbol, poll_order_fill,
+        )
         pos = self._positions.get(ticker)
         if pos is None and qty is None:
             logger.warning("AlpacaBroker.execute_exit: no position for %s", ticker)
@@ -136,6 +138,38 @@ class AlpacaBroker(Broker):
         result = place_market_order(
             symbol=ticker, qty=sell_qty, side='sell', time_in_force='day',
         )
+
+        # Poll Alpaca for fill price — enriches result for trade recording
+        if result and not result.get('error') and result.get('order_id'):
+            fill_info = poll_order_fill(result['order_id'], max_attempts=5, delay=1.0)
+            if fill_info.get('filled'):
+                fill_price = fill_info['filled_avg_price']
+                result['exit_price'] = fill_price
+                result['exit_qty'] = fill_info.get('filled_qty', sell_qty)
+                if pos and pos.avg_entry_price > 0:
+                    result['pnl'] = round(
+                        (fill_price - pos.avg_entry_price) * sell_qty, 2,
+                    )
+                logger.info(
+                    "AlpacaBroker.execute_exit: %s filled @ $%.2f (pnl=$%.2f)",
+                    ticker, fill_price, result.get('pnl', 0),
+                )
+            else:
+                # Not filled yet (pre-market order) — use current_price as estimate
+                est_price = pos.current_price if pos and pos.current_price > 0 else 0.0
+                if est_price > 0:
+                    result['exit_price'] = est_price
+                    result['exit_qty'] = sell_qty
+                    if pos and pos.avg_entry_price > 0:
+                        result['pnl'] = round(
+                            (est_price - pos.avg_entry_price) * sell_qty, 2,
+                        )
+                    result['estimated'] = True
+                    logger.info(
+                        "AlpacaBroker.execute_exit: %s not filled yet — estimated @ $%.2f",
+                        ticker, est_price,
+                    )
+
         return result
 
     def update_stop(

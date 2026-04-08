@@ -394,6 +394,18 @@ def _run_live_cycle_bg(session_id: str, params: InvocationInput, task_id: int):
         except Exception as e:
             print(f"[THREAD] Step 3: state load failed — {e}", flush=True)
             logger.warning("Live %s: failed to load state, cold start — %s", cycle, e)
+
+        # Bootstrap daily_stats from DynamoDB if empty (needed for SPY cumulative tracking)
+        if not state.daily_stats:
+            try:
+                all_stats = store.load_daily_stats(session_id)
+                if all_stats:
+                    state.daily_stats = [all_stats[-1]]  # most recent
+                    print(f"[THREAD] Step 3: bootstrapped daily_stats from DynamoDB "
+                          f"(date={all_stats[-1].get('date')})", flush=True)
+            except Exception as e:
+                logger.debug("Could not bootstrap daily_stats: %s", e)
+
         set_state(state)
 
         # ── Step 2b: If portfolio values are missing, do an initial broker sync ──

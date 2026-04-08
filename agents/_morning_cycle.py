@@ -584,7 +584,7 @@ class MorningCycleMixin:
                                     'reason': exit_reason,
                                     'against': dec.get('against', ''),
                                     'conflict': conflict_reason,
-                                    'fill_price': result.get('fill_price'),
+                                    'fill_price': result.get('exit_price'),
                                     'pnl': result.get('pnl'),
                                 })
                                 logger.info("MORNING: %s EXIT confirmed by LLM after review (MOO).", tick)
@@ -804,7 +804,7 @@ class MorningCycleMixin:
             'regime': pending.get('regime', 'UNKNOWN'),
             'regime_confidence': pending.get('regime_confidence'),
             'exits_placed': len(exit_orders_placed),
-            'partial_exits_placed': len(partial_exits_placed),
+            'partial_exits_count': len(partial_exits_placed),
             'exits_failed': len(exit_orders_failed),
             'stops_tightened': len(stops_tightened),
             'orders_placed': len(placed_orders),
@@ -812,6 +812,8 @@ class MorningCycleMixin:
             'llm_rejected': len(llm_rejected),
             'llm_rejected_details': llm_rejected,
             'morning_exit_details': morning_exit_details if exit_deferred_to_llm else [],
+            'exit_orders_placed': exit_orders_placed,
+            'partial_exits_placed': partial_exits_placed,
             'decisions': morning_decisions,
             'rejected_by_sizing': len(rejected_sizing),
             'day_events': day_events,

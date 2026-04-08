@@ -470,3 +470,46 @@ def get_open_orders() -> dict:
             'fetched_at': datetime.now(timezone.utc).isoformat(),
             'error': str(exc),
         }
+
+
+def poll_order_fill(order_id: str, max_attempts: int = 5, delay: float = 1.0) -> dict:
+    """Poll Alpaca for fill information on a submitted order.
+
+    Retries up to ``max_attempts`` times with ``delay`` seconds between each.
+    Returns fill details if the order is filled, or partial info if still open.
+
+    Returns:
+        Dict with ``order_id``, ``status``, ``filled_avg_price``, ``filled_qty``,
+        ``filled_at``, ``filled`` (bool).
+    """
+    if not _ALPACA_AVAILABLE:
+        return {'order_id': order_id, 'filled': False, 'error': 'alpaca-py not installed'}
+
+    import time
+    client = _get_trading_client()
+    for attempt in range(max_attempts):
+        try:
+            order = client.get_order_by_id(order_id)
+            status = str(order.status.value).lower() if order.status else ''
+            filled_price = float(order.filled_avg_price) if order.filled_avg_price else None
+            filled_qty = int(order.filled_qty) if order.filled_qty else None
+
+            if status == 'filled' and filled_price:
+                return {
+                    'order_id': order_id,
+                    'status': status,
+                    'filled_avg_price': filled_price,
+                    'filled_qty': filled_qty,
+                    'filled_at': order.filled_at.isoformat() if order.filled_at else None,
+                    'filled': True,
+                }
+            if status in ('cancelled', 'expired', 'rejected'):
+                return {'order_id': order_id, 'status': status, 'filled': False}
+            if attempt < max_attempts - 1:
+                time.sleep(delay)
+        except Exception as exc:
+            logger.debug("poll_order_fill attempt %d failed: %s", attempt + 1, exc)
+            if attempt < max_attempts - 1:
+                time.sleep(delay)
+
+    return {'order_id': order_id, 'filled': False, 'status': 'pending'}

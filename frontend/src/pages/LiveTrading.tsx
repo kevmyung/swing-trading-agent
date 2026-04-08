@@ -530,6 +530,8 @@ function MorningCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defau
   const decisions = cycle.decisions ?? [];
   const entrySignals = (Array.isArray(meta.entry_signals) ? meta.entry_signals : []) as AnyRecord[];
   const exitSignals = (Array.isArray(meta.exit_signals) ? meta.exit_signals : []) as AnyRecord[];
+  const exitOrdersPlaced = (Array.isArray(meta.exit_orders_placed) ? meta.exit_orders_placed : []) as AnyRecord[];
+  const partialExitsPlaced = (Array.isArray(meta.partial_exits_placed) ? meta.partial_exits_placed : []) as AnyRecord[];
   const research = (meta.research ?? {}) as Record<string, { summary?: string; risk_level?: string; veto_trade?: boolean }>;
   const researchEntries = Object.entries(research);
   const quantCandidates = (cycle.quant_context?.candidates ?? meta.quant_context?.candidates ?? {}) as Record<string, AnyRecord>;
@@ -560,14 +562,27 @@ function MorningCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defau
             <Badge variant="outline" className="text-[10px] bg-chart-2/10 text-chart-2 border-chart-2/30">MORNING</Badge>
             <span className="text-xs text-muted-foreground">{cycle.date}</span>
             <span className="text-[10px] text-muted-foreground/50">{expanded ? '▾' : '▸'}</span>
-            {!expanded && !skippedReason && <>
-              {decisions.filter((d) => d.action === 'LONG').map((d) => (
-                <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.LONG}`}>{d.ticker} LONG</Badge>
-              ))}
-              {decisions.filter((d) => d.action === 'EXIT' || d.action === 'PARTIAL_EXIT').map((d) => (
-                <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.EXIT}`}>{d.ticker} {d.action}</Badge>
-              ))}
-            </>}
+            {!expanded && !skippedReason && (() => {
+              // Collect EXIT tickers from decisions + exitSignals (auto-executed)
+              const decisionExitTickers = new Set(
+                decisions.filter((d) => d.action === 'EXIT' || d.action === 'PARTIAL_EXIT').map((d) => d.ticker)
+              );
+              const autoExitTickers = exitSignals
+                .filter((s) => (s.action as string)?.toUpperCase() === 'EXIT' || (s.action as string)?.toUpperCase() === 'PARTIAL_EXIT')
+                .map((s) => s.ticker as string)
+                .filter((t) => !decisionExitTickers.has(t));
+              return <>
+                {decisions.filter((d) => d.action === 'LONG').map((d) => (
+                  <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.LONG}`}>{d.ticker} LONG</Badge>
+                ))}
+                {decisions.filter((d) => d.action === 'EXIT' || d.action === 'PARTIAL_EXIT').map((d) => (
+                  <Badge key={d.ticker} className={`text-[10px] ${ACTION_BADGE.EXIT}`}>{d.ticker} {d.action}</Badge>
+                ))}
+                {autoExitTickers.map((t) => (
+                  <Badge key={t} className={`text-[10px] ${ACTION_BADGE.EXIT}`}>{t} EXIT</Badge>
+                ))}
+              </>;
+            })()}
           </CardTitle>
           {!expanded && (
             <div className="flex items-center gap-1.5 shrink-0">
@@ -647,42 +662,97 @@ function MorningCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defau
                   </div>
                 )}
 
-                {/* Exit details */}
-                {morningExitDetails.length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Exit Execution</p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="text-[11px] px-2">Ticker</TableHead>
-                          <TableHead className="text-[11px] px-2">EOD Signal</TableHead>
-                          <TableHead className="text-[11px] px-2">Morning Action</TableHead>
-                          <TableHead className="text-[11px] px-2">Fill Price</TableHead>
-                          <TableHead className="text-[11px] px-2">P&L</TableHead>
-                          <TableHead className="text-[11px] px-2">Reason</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {morningExitDetails.map((d, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="font-medium text-xs px-2"><TickerLink ticker={d.ticker} /></TableCell>
-                            <TableCell className="text-xs px-2"><Badge variant="secondary" className="text-[10px]">{d.eod_action}</Badge></TableCell>
-                            <TableCell className="px-2">
-                              <Badge variant="outline" className={`text-[10px] ${d.morning_action === 'OVERRIDE_HOLD' ? 'bg-chart-5/10 text-chart-5' : 'bg-loss-bg text-loss'}`}>
-                                {d.morning_action}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-xs font-mono px-2">{d.fill_price ? `$${d.fill_price.toFixed(2)}` : '-'}</TableCell>
-                            <TableCell className={`text-xs font-mono px-2 ${(d.pnl ?? 0) >= 0 ? 'text-gain' : 'text-loss'}`}>
-                              {d.pnl != null ? `${d.pnl >= 0 ? '+' : ''}$${d.pnl.toFixed(0)}` : '-'}
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground px-2 max-w-[200px]"><span className="line-clamp-1">{d.reason}</span></TableCell>
+                {/* Exit execution — auto-executed exits (from exit_orders_placed or exit_signals) */}
+                {(() => {
+                  // Build exit rows: prefer exit_orders_placed (has order details), fall back to exit_signals
+                  const exitOrderMap = new Map(exitOrdersPlaced.map((o) => [String(o.symbol), o]));
+                  const autoExits = exitSignals
+                    .filter((s) => {
+                      const a = String(s.action ?? '').toUpperCase();
+                      return a === 'EXIT' || a === 'PARTIAL_EXIT';
+                    })
+                    .map((s) => {
+                      const order = exitOrderMap.get(String(s.ticker));
+                      const exitPrice = Number(order?.exit_price ?? 0);
+                      const pnl = Number(order?.pnl ?? 0);
+                      const estimated = Boolean(order?.estimated);
+                      return {
+                        ticker: String(s.ticker),
+                        action: String(s.action ?? 'EXIT').toUpperCase(),
+                        qty: Number(order?.qty ?? order?.exit_qty ?? s.qty ?? 0),
+                        status: String(order?.status ?? 'submitted'),
+                        exitPrice,
+                        pnl,
+                        estimated,
+                        reason: String(s.pm_notes ?? s.reason ?? '-'),
+                      };
+                    });
+                  const partialExits = partialExitsPlaced.map((o) => ({
+                    ticker: String(o.symbol),
+                    action: 'PARTIAL_EXIT',
+                    qty: Number(o.qty ?? 0),
+                    status: String(o.status ?? 'submitted'),
+                    exitPrice: Number(o.exit_price ?? 0),
+                    pnl: Number(o.pnl ?? 0),
+                    estimated: Boolean(o.estimated),
+                    reason: `${Math.round(Number(o.exit_pct ?? 0.5) * 100)}% exit`,
+                  }));
+                  const allExits = [...autoExits, ...partialExits];
+                  if (allExits.length === 0 && morningExitDetails.length === 0) return null;
+                  return (
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+                        Exit Execution ({allExits.length + morningExitDetails.length})
+                      </p>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-[11px] px-2">Ticker</TableHead>
+                            <TableHead className="text-[11px] px-2">Action</TableHead>
+                            <TableHead className="text-[11px] px-2">Qty</TableHead>
+                            <TableHead className="text-[11px] px-2">Fill Price</TableHead>
+                            <TableHead className="text-[11px] px-2">P&L</TableHead>
+                            <TableHead className="text-[11px] px-2">Reason</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
+                        </TableHeader>
+                        <TableBody>
+                          {allExits.map((d, i) => (
+                            <TableRow key={`auto-${i}`}>
+                              <TableCell className="font-medium text-xs px-2"><TickerLink ticker={d.ticker} /></TableCell>
+                              <TableCell className="px-2">
+                                <Badge variant="outline" className={`text-[10px] ${ACTION_BADGE.EXIT}`}>{d.action}</Badge>
+                              </TableCell>
+                              <TableCell className="text-xs font-mono px-2">{d.qty || '-'}</TableCell>
+                              <TableCell className="text-xs font-mono px-2">
+                                {d.exitPrice > 0 ? <>
+                                  ${d.exitPrice.toFixed(2)}
+                                  {d.estimated && <span className="text-[9px] text-muted-foreground ml-0.5">~</span>}
+                                </> : '-'}
+                              </TableCell>
+                              <TableCell className={`text-xs font-mono px-2 ${d.pnl >= 0 ? 'text-gain' : 'text-loss'}`}>
+                                {d.exitPrice > 0 ? `${d.pnl >= 0 ? '+' : ''}$${d.pnl.toFixed(0)}` : '-'}
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground px-2 max-w-[200px]"><span className="line-clamp-1">{d.reason}</span></TableCell>
+                            </TableRow>
+                          ))}
+                          {morningExitDetails.map((d, i) => (
+                            <TableRow key={`llm-${i}`}>
+                              <TableCell className="font-medium text-xs px-2"><TickerLink ticker={d.ticker} /></TableCell>
+                              <TableCell className="px-2">
+                                <Badge variant="outline" className={`text-[10px] ${d.morning_action === 'OVERRIDE_HOLD' ? 'bg-chart-5/10 text-chart-5' : ACTION_BADGE.EXIT}`}>
+                                  {d.morning_action}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-xs font-mono px-2">{d.fill_price ? `$${d.fill_price.toFixed(2)}` : '-'}</TableCell>
+                              <TableCell className="text-xs px-2">{d.pnl != null ? <span className={`font-mono ${(d.pnl ?? 0) >= 0 ? 'text-gain' : 'text-loss'}`}>{d.pnl >= 0 ? '+' : ''}${d.pnl.toFixed(0)}</span> : '-'}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground px-2 max-w-[200px]"><span className="line-clamp-1">{d.reason}</span></TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  );
+                })()}
 
                 {/* LLM Rejections */}
                 {llmRejected.length > 0 && (
@@ -700,7 +770,7 @@ function MorningCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defau
                   </div>
                 )}
 
-                {entrySignals.length === 0 && morningExitDetails.length === 0 && llmRejected.length === 0 && (
+                {entrySignals.length === 0 && exitSignals.length === 0 && exitOrdersPlaced.length === 0 && morningExitDetails.length === 0 && llmRejected.length === 0 && (
                   <p className="text-xs text-muted-foreground">No entry or exit activity.</p>
                 )}
               </TabsContent>
@@ -818,6 +888,8 @@ function IntradayCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defa
   const quantCount = Object.keys(quantPositions).length;
   const dayEvents = (meta.day_events ?? cycle.events ?? []) as AnyRecord[];
   const stopHits = dayEvents.filter((e) => e.action === 'STOP_LOSS_HIT' || e.action === 'STOP_LOSS' || e.action === 'STOP_EXIT');
+  const exitOrdersPlaced = (Array.isArray(meta.exit_orders_placed) ? meta.exit_orders_placed : []) as AnyRecord[];
+  const exitsPlaced = Number(meta.exits_placed ?? 0);
   const playbooks = (meta.playbook_reads ?? []) as string[];
   const prompt = (cycle.prompt ?? meta.prompt ?? '') as string;
 
@@ -907,14 +979,28 @@ function IntradayCard({ cycle, defaultOpen = false }: { cycle: CycleDetail; defa
 
             {/* ── Positions (with stop adjustments) ── */}
             <TabsContent value="positions" className="mt-3 space-y-3">
-              {stopHits.length > 0 && (
+              {(stopHits.length > 0 || exitOrdersPlaced.length > 0) && (
                 <div className="flex flex-wrap gap-1 text-xs">
-                  <span className="text-loss">Stop hit:</span>
-                  {stopHits.map((e, i) => (
-                    <Badge key={i} variant="outline" className="text-[10px] bg-loss-bg text-loss border-loss/30">
-                      {String(e.ticker)} @${Number(e.exit_price ?? 0).toFixed(2)} P&L ${Number(e.pnl ?? 0) >= 0 ? '+' : ''}{Number(e.pnl ?? 0).toFixed(0)}
-                    </Badge>
-                  ))}
+                  {stopHits.length > 0 && <>
+                    <span className="text-loss">Stop hit:</span>
+                    {stopHits.map((e, i) => (
+                      <Badge key={`sh-${i}`} variant="outline" className="text-[10px] bg-loss-bg text-loss border-loss/30">
+                        {String(e.ticker)} @${Number(e.exit_price ?? 0).toFixed(2)} P&L ${Number(e.pnl ?? 0) >= 0 ? '+' : ''}{Number(e.pnl ?? 0).toFixed(0)}
+                      </Badge>
+                    ))}
+                  </>}
+                  {exitOrdersPlaced.length > 0 && <>
+                    <span className="text-loss">Exits:</span>
+                    {exitOrdersPlaced.map((o, i) => {
+                      const exitPrice = Number(o.exit_price ?? 0);
+                      const pnl = Number(o.pnl ?? 0);
+                      return (
+                        <Badge key={`ex-${i}`} variant="outline" className="text-[10px] bg-loss-bg text-loss border-loss/30">
+                          {String(o.symbol)} @${exitPrice > 0 ? exitPrice.toFixed(2) : '-'} P&L {pnl >= 0 ? '+' : ''}${pnl.toFixed(0)}
+                        </Badge>
+                      );
+                    })}
+                  </>}
                 </div>
               )}
               {autoDetails.length > 0 && (
@@ -1185,19 +1271,34 @@ export function PaperTrading() {
         }
       })
       .catch(() => {})
-      .finally(() => { pollRef.current = false; setLoading(false); });
+      .finally(() => { pollRef.current = false; setLoading(false); lastRefreshRef.current = Date.now(); });
   }, []);
 
   useEffect(() => {
     api.listPaperSessions().then(setPastSessions).catch(() => {});
   }, []);
 
+  const lastRefreshRef = useRef<number>(0);
   useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => {
     if (!isRunning) return;
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, [isRunning, loadData]);
+
+  // Auto-refresh when idle: if session exists but agent isn't running,
+  // refresh once after 60 minutes of inactivity (e.g. between cycles).
+  useEffect(() => {
+    if (isRunning || !sessionId) return;
+    const AUTO_REFRESH_MS = 60 * 60 * 1000; // 1 hour
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - lastRefreshRef.current;
+      if (elapsed >= AUTO_REFRESH_MS) {
+        loadData();
+      }
+    }, 60_000); // check every minute
+    return () => clearInterval(interval);
+  }, [isRunning, sessionId, loadData]);
 
   // Poll available cycle when running
   useEffect(() => {
