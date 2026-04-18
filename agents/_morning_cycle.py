@@ -683,6 +683,7 @@ class MorningCycleMixin:
                 if not is_add:
                     position_count += 1
 
+            regime = pending.get('regime', 'UNKNOWN')
             half_size_tickers: set[str] = set()
             for order in orders_to_place:
                 strategy = order.pop('strategy', 'MOMENTUM')
@@ -707,6 +708,34 @@ class MorningCycleMixin:
                     if is_half:
                         half_size_tickers.add(order['symbol'])
                     result['bracket_order_id'] = result.get('order_id', '')
+
+                    # Create local Position immediately to preserve metadata across
+                    # cycles. Backtest fill_pending (below) or live Alpaca sync (next
+                    # cycle) will update price/qty via the "existing" branch without
+                    # overwriting strategy/entry_conditions/signal_price/etc.
+                    ticker = order['symbol']
+                    if ticker not in self.portfolio_state.positions:
+                        est_price = (
+                            order.get('limit_price')
+                            or order.get('signal_price', 0.0)
+                            or 0.0
+                        )
+                        self.portfolio_state.positions[ticker] = Position(
+                            symbol=ticker,
+                            qty=order['qty'],
+                            avg_entry_price=est_price,
+                            current_price=est_price,
+                            stop_loss_price=order['stop_loss_price'],
+                            signal_price=order.get('signal_price', 0.0),
+                            bracket_order_id=result.get('order_id', ''),
+                            entry_date=today_str,
+                            strategy=strategy,
+                            entry_conditions={'regime': regime},
+                            entry_qty=order['qty'],
+                            scaled_entry=is_half,
+                            highest_close=est_price,
+                        )
+
                     # Remove from watchlist only after order is successfully placed
                     from tools.journal.watchlist import remove_from_watchlist
                     remove_from_watchlist(order['symbol'])
@@ -715,7 +744,6 @@ class MorningCycleMixin:
                                 result.get('order_id', 'n/a'))
 
             # ── Step 8: Fill pending orders (simulation only) ──────────────
-            regime = pending.get('regime', 'UNKNOWN')
             fills = self._get_broker().fill_pending(cutoff_utc='14:30')
             for f in fills:
                 if f['action'] == 'ENTRY_FILLED':

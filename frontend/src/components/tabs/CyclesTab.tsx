@@ -31,7 +31,7 @@ const CYCLE_ORDER: Record<string, number> = {
  *  INTRADAY data is wrapped into `intraday_meta` + `intraday_decisions`.
  *  token_usage is combined as {eod, morning, intraday, research} keys.
  *  events arrays are concatenated across all cycles. */
-function mergeCycles(cycles: CycleDetail[]): CycleDetail | null {
+export function mergeCycles(cycles: CycleDetail[]): CycleDetail | null {
   if (cycles.length === 0) return null;
   const merged: Record<string, unknown> = {};
   const combinedTokenUsage: Record<string, unknown> = {};
@@ -1183,10 +1183,11 @@ function DayCard({ date, dayDetail, nextDayDetail, sessionId }: {
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 
-function buildExportJSON(
+export function buildExportJSON(
   sessionId: string,
   dates: string[],
   dayDetailMap: Map<string, CycleDetail>,
+  extra?: Record<string, unknown>,
 ): string {
   const cycles: Record<string, unknown>[] = [];
 
@@ -1270,10 +1271,10 @@ function buildExportJSON(
     cycles.push(entry);
   }
 
-  return JSON.stringify({ session_id: sessionId, exported_at: new Date().toISOString(), cycles }, null, 2);
+  return JSON.stringify({ session_id: sessionId, exported_at: new Date().toISOString(), ...(extra ?? {}), cycles }, null, 2);
 }
 
-function buildExportMarkdown(
+export function buildExportMarkdown(
   sessionId: string,
   dates: string[],
   allDates: string[],
@@ -1592,7 +1593,7 @@ function buildExportMarkdown(
   return lines.join('\n');
 }
 
-function downloadFile(content: string, filename: string) {
+export function downloadFile(content: string, filename: string) {
   const mime = filename.endsWith('.json') ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8';
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);

@@ -8,6 +8,7 @@ import { MetricCard } from '@/components/MetricCard';
 import { TickerLink } from '@/components/TickerLink';
 import { TradesTab } from '@/components/tabs/TradesTab';
 import { ChartsTab } from '@/components/tabs/ChartsTab';
+import { mergeCycles, buildExportJSON, buildExportMarkdown, downloadFile } from '@/components/tabs/CyclesTab';
 import { BackwardReturnsChart } from '@/components/BackwardReturnsChart';
 import { MODEL_OPTIONS } from '@/lib/format';
 import {
@@ -1355,6 +1356,49 @@ export function PaperTrading() {
     }
   }
 
+  function handleExport(format: 'json' | 'md') {
+    if (!sessionId) return;
+    // Group cycles by date → merged day detail (same shape as SessionDetail/CyclesTab)
+    const byDate = new Map<string, CycleDetail[]>();
+    for (const c of recentCycles) {
+      const d = c.date;
+      if (!byDate.has(d)) byDate.set(d, []);
+      byDate.get(d)!.push(c);
+    }
+    const dayCache = new Map<string, CycleDetail>();
+    for (const [date, arr] of byDate) {
+      const merged = mergeCycles(arr);
+      if (merged) dayCache.set(date, merged);
+    }
+    const dates = [...dayCache.keys()].sort();
+    if (dates.length === 0) {
+      alert('No cycles to export yet.');
+      return;
+    }
+    if (format === 'json') {
+      const trades = agentState?.trade_history ?? [];
+      const positions = agentState?.positions ?? {};
+      const json = buildExportJSON(sessionId, dates, dayCache, {
+        mode: 'paper',
+        portfolio: {
+          start_value: session?.start_value,
+          portfolio_value: agentState?.portfolio_value,
+          cash: agentState?.cash,
+          total_return_pct: session?.start_value
+            ? (((agentState?.portfolio_value ?? 0) - (session.start_value)) / session.start_value) * 100
+            : null,
+        },
+        positions,
+        trade_history: trades,
+        daily_stats: dailyStats,
+      });
+      downloadFile(json, `${sessionId}_paper_trading.json`);
+    } else {
+      const md = buildExportMarkdown(sessionId, dates, dates, dayCache);
+      downloadFile(md, `${sessionId}_paper_trading.md`);
+    }
+  }
+
   async function handleStop() {
     setStopping(true);
     try {
@@ -1432,6 +1476,24 @@ export function PaperTrading() {
           )}
         </div>
         <div className="flex gap-2 items-center">
+          {sessionId && recentCycles.length > 0 && (
+            <>
+              <button
+                className="px-3 py-1.5 rounded-md text-xs font-medium border bg-background hover:bg-muted transition-colors"
+                onClick={() => handleExport('json')}
+                title="Export cycles, decisions, trades, and portfolio state as JSON"
+              >
+                Export .json
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-md text-xs font-medium border bg-background hover:bg-muted transition-colors"
+                onClick={() => handleExport('md')}
+                title="Export cycles as Markdown"
+              >
+                Export .md
+              </button>
+            </>
+          )}
           {!isRunning ? (
             <>
               <select
