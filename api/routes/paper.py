@@ -624,6 +624,8 @@ def sync_paper_positions():
                 local['current_price'] = pos_data.get('current_price', local.get('current_price', 0))
                 local['unrealized_pnl'] = pos_data.get('unrealized_pnl', local.get('unrealized_pnl', 0))
                 local['qty'] = pos_data.get('qty', local.get('qty', 0))
+                if pos_data.get('avg_entry_price', 0) > 0:
+                    local['avg_entry_price'] = pos_data['avg_entry_price']
                 merged[sym] = local
             else:
                 merged[sym] = pos_data

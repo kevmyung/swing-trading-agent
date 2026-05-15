@@ -121,19 +121,20 @@ class IntradayCycleMixin:
         # Sync positions from Alpaca into agent state
         from state.portfolio_state import Position
         positions_full = portfolio.get('positions_full', {})
-        if positions_full:
-            synced_syms = set(positions_full.keys())
-            for sym, pos_data in positions_full.items():
-                if sym not in self.portfolio_state.positions:
-                    self.portfolio_state.positions[sym] = Position.from_dict(pos_data)
-                else:
-                    local = self.portfolio_state.positions[sym]
-                    local.current_price = pos_data.get('current_price', local.current_price)
-                    local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
-                    local.qty = pos_data.get('qty', local.qty)
-            for sym in list(self.portfolio_state.positions.keys()):
-                if sym not in synced_syms:
-                    del self.portfolio_state.positions[sym]
+        synced_syms = set(positions_full.keys())
+        for sym, pos_data in positions_full.items():
+            if sym not in self.portfolio_state.positions:
+                self.portfolio_state.positions[sym] = Position.from_dict(pos_data)
+            else:
+                local = self.portfolio_state.positions[sym]
+                local.current_price = pos_data.get('current_price', local.current_price)
+                local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
+                local.qty = pos_data.get('qty', local.qty)
+                if pos_data.get('avg_entry_price', 0) > 0:
+                    local.avg_entry_price = pos_data['avg_entry_price']
+        for sym in list(self.portfolio_state.positions.keys()):
+            if sym not in synced_syms:
+                del self.portfolio_state.positions[sym]
 
         # ── Step 1b: Reconcile unfilled exit trades ─────────────────────
         # Morning cycle records trades before Alpaca fills (pre-market orders).
@@ -622,7 +623,8 @@ class IntradayCycleMixin:
         """
         from tools.execution.alpaca_orders import get_order_fill
 
-        unfilled = [t for t in self.portfolio_state.trade_history if t.price <= 0]
+        unfilled = [t for t in self.portfolio_state.trade_history
+                    if t.price <= 0 or getattr(t, 'estimated', False)]
         if not unfilled:
             return
 
@@ -638,16 +640,24 @@ class IntradayCycleMixin:
                     continue
             needs_fallback.append(trade)
 
-        # Fallback: query Alpaca closed sell orders and match by symbol + qty
+        # Fallback: query Alpaca closed sell orders and match by symbol + qty + recency
         if needs_fallback:
             closed_fills = self._fetch_closed_sell_fills(
                 {t.symbol for t in needs_fallback},
             )
             for trade in needs_fallback:
-                key = (trade.symbol, trade.qty)
-                fill_price = closed_fills.get(key)
-                if fill_price:
-                    self._apply_fill_to_trade(trade, fill_price)
+                candidates = closed_fills.get(trade.symbol, [])
+                # Find best match: same qty, most recent, not yet consumed
+                best = None
+                best_idx = -1
+                for i, (qty, price, filled_at) in enumerate(candidates):
+                    if qty == trade.qty:
+                        best = price
+                        best_idx = i
+                        break
+                if best is not None:
+                    candidates.pop(best_idx)
+                    self._apply_fill_to_trade(trade, best)
                     updated += 1
 
         if updated:
@@ -656,6 +666,7 @@ class IntradayCycleMixin:
 
     def _apply_fill_to_trade(self, trade, fill_price: float) -> None:
         trade.price = fill_price
+        trade.estimated = False
         if trade.entry_price > 0:
             trade.pnl = round(
                 (trade.price - trade.entry_price) * trade.qty, 2,
@@ -668,22 +679,23 @@ class IntradayCycleMixin:
               f"${trade.price:.2f} P&L ${trade.pnl:.2f}", flush=True)
 
     @staticmethod
-    def _fetch_closed_sell_fills(symbols: set[str]) -> dict[tuple[str, int], float]:
+    def _fetch_closed_sell_fills(symbols: set[str]) -> dict[str, list[tuple[int, float, str]]]:
         """Fetch filled sell orders from Alpaca for given symbols.
 
-        Returns mapping of (symbol, qty) → filled_avg_price.
-        Most recent fill per (symbol, qty) wins.
+        Returns mapping of symbol → [(qty, filled_avg_price, filled_at), ...],
+        ordered most-recent-first so the nearest temporal match is consumed first.
         """
         try:
             from tools.execution.portfolio_sync import _get_trading_client
             from alpaca.trading.requests import GetOrdersRequest
             from alpaca.trading.enums import QueryOrderStatus
+            from collections import defaultdict
 
             client = _get_trading_client()
             orders = client.get_orders(
                 filter=GetOrdersRequest(status=QueryOrderStatus.CLOSED),
             )
-            fills: dict[tuple[str, int], float] = {}
+            fills: dict[str, list[tuple[int, float, str]]] = defaultdict(list)
             for order in orders:
                 sym = order.symbol
                 if sym not in symbols:
@@ -692,10 +704,11 @@ class IntradayCycleMixin:
                 status = str(order.status.value) if order.status else ''
                 if side != 'sell' or status != 'filled' or not order.filled_avg_price:
                     continue
-                key = (sym, int(order.filled_qty) if order.filled_qty else 0)
-                if key not in fills:
-                    fills[key] = float(order.filled_avg_price)
-            return fills
+                qty = int(order.filled_qty) if order.filled_qty else 0
+                price = float(order.filled_avg_price)
+                filled_at = str(getattr(order, 'filled_at', '') or '')
+                fills[sym].append((qty, price, filled_at))
+            return dict(fills)
         except Exception as exc:
             logger.warning("Failed to fetch closed sell fills: %s", exc)
             return {}

@@ -138,6 +138,23 @@ def sync_positions_from_alpaca(existing_positions=None) -> dict:
             logger.debug("Could not fetch open orders: %s", exc)
 
         # --- Detect closed positions (in local state but not in Alpaca) ---
+        # Pre-fetch recent filled sell orders to get actual exit prices
+        _recent_sell_fills: dict[str, tuple[float, int]] = {}
+        try:
+            closed_orders = client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.CLOSED)
+            )
+            for o in closed_orders:
+                sym = getattr(o, 'symbol', '')
+                side = str(getattr(o, 'side', '')).lower()
+                status = str(getattr(o, 'status', '')).lower()
+                if side == 'sell' and status == 'filled' and sym:
+                    fill_price = float(o.filled_avg_price) if o.filled_avg_price else 0.0
+                    fill_qty = int(o.filled_qty) if o.filled_qty else 0
+                    if fill_price > 0 and sym not in _recent_sell_fills:
+                        _recent_sell_fills[sym] = (fill_price, fill_qty)
+        except Exception as exc:
+            logger.debug("portfolio_sync: could not fetch recent sells for exit pricing: %s", exc)
 
         newly_closed = []
         for symbol in list(portfolio.positions.keys()):
@@ -146,11 +163,14 @@ def sync_positions_from_alpaca(existing_positions=None) -> dict:
                     logger.info("portfolio_sync: %s not in Alpaca positions but has pending buy — keeping", symbol)
                     continue
                 local_pos = portfolio.positions[symbol]
-                exit_price = (
-                    local_pos.current_price
-                    if local_pos.current_price > 0
-                    else local_pos.avg_entry_price
-                )
+                # Use actual Alpaca fill price if available, fall back to last synced price
+                sell_fill = _recent_sell_fills.get(symbol)
+                if sell_fill and sell_fill[0] > 0:
+                    exit_price = sell_fill[0]
+                elif local_pos.current_price > 0:
+                    exit_price = local_pos.current_price
+                else:
+                    exit_price = local_pos.avg_entry_price
                 realized_pnl = (exit_price - local_pos.avg_entry_price) * local_pos.qty
                 holding_days = 0
                 if local_pos.entry_date:
@@ -234,6 +254,7 @@ def sync_positions_from_alpaca(existing_positions=None) -> dict:
                 local.current_price = current_price
                 local.unrealized_pnl = unrealized_pl
                 local.qty = qty
+                local.avg_entry_price = avg_entry
             else:
                 stop_price = bracket_stop_map.get(ap.symbol, 0.0)
                 entry_date = bracket_entry_date_map.get(ap.symbol, '')

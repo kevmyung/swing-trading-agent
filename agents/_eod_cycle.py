@@ -116,27 +116,28 @@ class EODCycleMixin:
         # entry_date, stop_loss, etc.) from agent state which was set at fill time.
         from state.portfolio_state import Position as _Pos
         positions_full = portfolio.get('positions_full', {})
-        if positions_full:
-            synced_syms = set(positions_full.keys())
-            for sym, pos_data in positions_full.items():
-                if sym not in self.portfolio_state.positions:
-                    self.portfolio_state.positions[sym] = _Pos.from_dict(pos_data)
-                else:
-                    local = self.portfolio_state.positions[sym]
-                    # Update live data from broker
-                    local.current_price = pos_data.get('current_price', local.current_price)
-                    local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
-                    local.qty = pos_data.get('qty', local.qty)
-                    # Recover metadata if local state lost it (e.g. cold container)
-                    if not local.strategy and pos_data.get('strategy'):
-                        local.strategy = pos_data['strategy']
-                    if not local.entry_date and pos_data.get('entry_date'):
-                        local.entry_date = pos_data['entry_date']
-                    if local.stop_loss_price == 0 and pos_data.get('stop_loss_price', 0) > 0:
-                        local.stop_loss_price = pos_data['stop_loss_price']
-            for sym in list(self.portfolio_state.positions.keys()):
-                if sym not in synced_syms:
-                    del self.portfolio_state.positions[sym]
+        synced_syms = set(positions_full.keys())
+        for sym, pos_data in positions_full.items():
+            if sym not in self.portfolio_state.positions:
+                self.portfolio_state.positions[sym] = _Pos.from_dict(pos_data)
+            else:
+                local = self.portfolio_state.positions[sym]
+                # Update live data from broker
+                local.current_price = pos_data.get('current_price', local.current_price)
+                local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
+                local.qty = pos_data.get('qty', local.qty)
+                if pos_data.get('avg_entry_price', 0) > 0:
+                    local.avg_entry_price = pos_data['avg_entry_price']
+                # Recover metadata if local state lost it (e.g. cold container)
+                if not local.strategy and pos_data.get('strategy'):
+                    local.strategy = pos_data['strategy']
+                if not local.entry_date and pos_data.get('entry_date'):
+                    local.entry_date = pos_data['entry_date']
+                if local.stop_loss_price == 0 and pos_data.get('stop_loss_price', 0) > 0:
+                    local.stop_loss_price = pos_data['stop_loss_price']
+        for sym in list(self.portfolio_state.positions.keys()):
+            if sym not in synced_syms:
+                del self.portfolio_state.positions[sym]
 
         existing_positions = self.portfolio_state.positions  # {ticker: Position}
 

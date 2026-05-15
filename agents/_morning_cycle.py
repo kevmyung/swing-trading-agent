@@ -82,6 +82,7 @@ def _record_trade(portfolio_state, pos, result, sim_date: str) -> None:
         signal_price=sig_price,
         slippage_bps=entry_slippage,
         order_id=result.get('order_id', ''),
+        estimated=bool(result.get('estimated')),
     )
     portfolio_state.record_trade(trade)
 
@@ -152,21 +153,22 @@ class MorningCycleMixin:
         )
         # Sync positions from Alpaca into agent state
         positions_full = portfolio.get('positions_full', {})
-        if positions_full:
-            synced_syms = set(positions_full.keys())
-            for sym, pos_data in positions_full.items():
-                if sym not in self.portfolio_state.positions:
-                    self.portfolio_state.positions[sym] = Position.from_dict(pos_data)
-                else:
-                    # Update price/pnl but keep local fields (strategy, stop, etc.)
-                    local = self.portfolio_state.positions[sym]
-                    local.current_price = pos_data.get('current_price', local.current_price)
-                    local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
-                    local.qty = pos_data.get('qty', local.qty)
-            # Remove positions closed on Alpaca
-            for sym in list(self.portfolio_state.positions.keys()):
-                if sym not in synced_syms:
-                    del self.portfolio_state.positions[sym]
+        synced_syms = set(positions_full.keys())
+        for sym, pos_data in positions_full.items():
+            if sym not in self.portfolio_state.positions:
+                self.portfolio_state.positions[sym] = Position.from_dict(pos_data)
+            else:
+                # Update price/pnl but keep local fields (strategy, stop, etc.)
+                local = self.portfolio_state.positions[sym]
+                local.current_price = pos_data.get('current_price', local.current_price)
+                local.unrealized_pnl = pos_data.get('unrealized_pnl', local.unrealized_pnl)
+                local.qty = pos_data.get('qty', local.qty)
+                if pos_data.get('avg_entry_price', 0) > 0:
+                    local.avg_entry_price = pos_data['avg_entry_price']
+        # Remove positions closed on Alpaca
+        for sym in list(self.portfolio_state.positions.keys()):
+            if sym not in synced_syms:
+                del self.portfolio_state.positions[sym]
 
         # ── Step 3: Overnight research (inline, stateless) ─────────────────
         researcher = self._get_researcher()
